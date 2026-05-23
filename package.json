@@ -1,0 +1,30 @@
+{
+  "name": "seance",
+  "version": "0.0.1",
+  "description": "Summon and arrange Ghostty terminal panes into named groups, grids, and per-project themes.",
+  "type": "module",
+  "bin": {
+    "seance": "./bin/seance.mjs"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "execa": "^9.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "license": "MIT"
+}

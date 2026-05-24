@@ -27,14 +27,22 @@ export function listGroups(state: SeanceState): Group[] {
 
 export function addWindow(state: SeanceState, name: string, win: WindowRef): Group {
   const g = getGroup(state, name);
-  if (!g.windows.some((w) => w.windowId === win.windowId)) {
-    g.windows.push(win);
-    g.updatedAt = new Date().toISOString();
-  }
+  g.windows = g.windows.filter(
+    (w) => w.windowId !== win.windowId && (win.slot === undefined || w.slot !== win.slot),
+  );
+  g.windows.push(win);
+  g.updatedAt = new Date().toISOString();
   return g;
 }
 
-export function removeWindow(state: SeanceState, name: string, windowId: number): Group {
+export function nextFreeSlot(g: Group): number {
+  const used = new Set(
+    g.windows.map((w) => w.slot).filter((s): s is number => typeof s === "number"),
+  );
+  for (let i = 1; ; i++) if (!used.has(i)) return i;
+}
+
+export function removeWindow(state: SeanceState, name: string, windowId: string): Group {
   const g = getGroup(state, name);
   const before = g.windows.length;
   g.windows = g.windows.filter((w) => w.windowId !== windowId);

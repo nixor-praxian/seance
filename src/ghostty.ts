@@ -1,4 +1,5 @@
 import { execa } from "execa";
+import { promises as fs } from "node:fs";
 import type { Rect, WindowRef } from "./types.js";
 
 const GHOSTTY_BUNDLE_ID = "com.mitchellh.ghostty";
@@ -8,11 +9,15 @@ const GHOSTTY_APP_NAME = "Ghostty";
  * Run an AppleScript snippet and return stdout.
  * Throws if osascript exits non-zero.
  */
-export async function osascript(script: string): Promise<string> {
+export async function osascript(
+  script: string,
+  opts: { language?: "AppleScript" | "JavaScript" } = {},
+): Promise<string> {
   if (process.platform !== "darwin") {
     throw new Error("seance: Ghostty bridge requires macOS (osascript not available)");
   }
-  const { stdout } = await execa("osascript", ["-e", script]);
+  const args = opts.language === "JavaScript" ? ["-l", "JavaScript", "-e", script] : ["-e", script];
+  const { stdout } = await execa("osascript", args);
   return stdout.trim();
 }
 
@@ -55,7 +60,7 @@ export async function listWindows(): Promise<WindowRef[]> {
     const rows = parseTsv(raw);
     if (rows.length > 0) {
       return rows.map(([id, title]) => ({
-        windowId: Number(id),
+        windowId: id ?? "",
         ...(title ? { title } : {}),
       }));
     }
@@ -83,7 +88,7 @@ export async function listWindows(): Promise<WindowRef[]> {
   `;
   const raw = await osascript(script);
   return parseTsv(raw).map(([idx, title]) => ({
-    windowId: Number(idx),
+    windowId: `axindex:${idx}`,
     ...(title ? { title } : {}),
   }));
 }
@@ -103,8 +108,9 @@ export async function focusedWindow(): Promise<WindowRef | null> {
     const raw = await osascript(script);
     if (!raw) return null;
     const [id, title] = raw.split("\t");
+    if (!id) return null;
     return {
-      windowId: Number(id),
+      windowId: id,
       ...(title ? { title } : {}),
     };
   } catch {
@@ -113,29 +119,75 @@ export async function focusedWindow(): Promise<WindowRef | null> {
 }
 
 /**
- * Move + resize a Ghostty window by its id.
- * Uses System Events accessibility for reliable framing.
+ * Return the controlling TTY of the current process (e.g. /dev/ttys002),
+ * or undefined if not attached to a terminal.
+ *
+ * We shell out to `tty` with stdin inherited so the child sees the same
+ * controlling terminal as seance itself.
  */
-export async function setWindowBounds(windowId: number, rect: Rect): Promise<void> {
+export async function currentTty(): Promise<string | undefined> {
+  try {
+    const { stdout } = await execa("tty", [], {
+      stdin: "inherit",
+      stdout: "pipe",
+      stderr: "pipe",
+      reject: false,
+    });
+    const t = stdout.trim();
+    return t.startsWith("/dev/") ? t : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Move + resize a set of Ghostty windows.
+ *
+ * Targeting strategy: write a unique OSC 2 title sentinel to each window's TTY,
+ * then look the window up in System Events by name. This sidesteps the fact
+ * that Ghostty's `id` (a tab-group id) can't be addressed via System Events,
+ * and that Ghostty's window-list order doesn't match AX z-order.
+ *
+ * Per-window TTY is required (captured at `group add` time).
+ */
+export async function setWindowBounds(
+  plans: Array<{ ttyPath: string; rect: Rect }>,
+): Promise<void> {
+  if (plans.length === 0) return;
+
+  const stamp = Date.now().toString(36);
+  const stamped = plans.map((p, i) => ({
+    ttyPath: p.ttyPath,
+    sentinel: `⎈seance:${stamp}:${i}`,
+    rect: p.rect,
+  }));
+
+  await Promise.all(
+    stamped.map((s) => fs.writeFile(s.ttyPath, `\x1b]2;${s.sentinel}\x07`, { flag: "a" })),
+  );
+
+  // Give Ghostty time to process OSC sequences and propagate titles to AX.
+  await new Promise((r) => setTimeout(r, 200));
+
+  const captures = stamped
+    .map(
+      (s, i) =>
+        `set w${i} to first window whose name is "${s.sentinel.replace(/"/g, '\\"')}"`,
+    )
+    .join("\n        ");
+  const applies = stamped
+    .map(
+      (s, i) =>
+        `set position of w${i} to {${s.rect.x}, ${s.rect.y}}\n        ` +
+        `set size of w${i} to {${s.rect.width}, ${s.rect.height}}`,
+    )
+    .join("\n        ");
+
   const script = `
     tell application "System Events"
       tell process "${GHOSTTY_APP_NAME}"
-        set targetWindow to missing value
-        repeat with w in windows
-          try
-            if (id of w) is ${windowId} then set targetWindow to w
-          end try
-        end repeat
-        if targetWindow is missing value then
-          -- fallback: treat windowId as 1-based index
-          if (count of windows) >= ${windowId} then
-            set targetWindow to window ${windowId}
-          else
-            error "window ${windowId} not found"
-          end if
-        end if
-        set position of targetWindow to {${rect.x}, ${rect.y}}
-        set size of targetWindow to {${rect.width}, ${rect.height}}
+        ${captures}
+        ${applies}
       end tell
     end tell
   `;
@@ -145,21 +197,26 @@ export async function setWindowBounds(windowId: number, rect: Rect): Promise<voi
 /**
  * Visible screen frame of the main display in AX coordinates
  * (top-left origin, excludes menu bar and dock).
+ *
+ * Uses NSScreen.visibleFrame via JXA. visibleFrame is in Cocoa coords
+ * (bottom-left origin), so we flip y against the full frame height.
  */
 export async function mainScreenFrame(): Promise<Rect> {
   const script = `
-    tell application "Finder"
-      set b to bounds of window of desktop
-    end tell
-    return (item 1 of b as string) & "\\t" & (item 2 of b as string) & "\\t" & (item 3 of b as string) & "\\t" & (item 4 of b as string)
+    ObjC.import('AppKit');
+    const screen = $.NSScreen.mainScreen;
+    const fullH = screen.frame.size.height;
+    const v = screen.visibleFrame;
+    const topY = fullH - (v.origin.y + v.size.height);
+    [v.origin.x, topY, v.size.width, v.size.height].join('\\t');
   `;
-  const raw = await osascript(script);
-  const [x1, y1, x2, y2] = raw.split("\t").map(Number);
+  const raw = await osascript(script, { language: "JavaScript" });
+  const [x, y, w, h] = raw.split("\t").map(Number);
   return {
-    x: x1 ?? 0,
-    y: y1 ?? 0,
-    width: (x2 ?? 0) - (x1 ?? 0),
-    height: (y2 ?? 0) - (y1 ?? 0),
+    x: x ?? 0,
+    y: y ?? 0,
+    width: w ?? 0,
+    height: h ?? 0,
   };
 }
 
@@ -190,7 +247,339 @@ export async function listThemes(): Promise<string[]> {
   return stdout
     .split("\n")
     .map((s) => s.trim())
+    .map((s) => s.replace(/\s*\([^)]*\)\s*$/, ""))
     .filter((s) => s.length > 0);
+}
+
+export interface WindowInfo {
+  axIndex: number;
+  title: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  minimized: boolean;
+}
+
+/**
+ * Snapshot every Ghostty top-level window via System Events.
+ * Index is the AX 1-based position (z-order, frontmost first).
+ */
+export async function listAllWindows(): Promise<WindowInfo[]> {
+  const script = `
+    tell application "System Events"
+      tell process "${GHOSTTY_APP_NAME}"
+        set out to ""
+        set i to 0
+        repeat with w in windows
+          set i to i + 1
+          set t to ""
+          try
+            set t to name of w
+          end try
+          set px to "?"
+          set py to "?"
+          try
+            set p to position of w
+            set px to (item 1 of p as string)
+            set py to (item 2 of p as string)
+          end try
+          set sw to "?"
+          set sh to "?"
+          try
+            set sz to size of w
+            set sw to (item 1 of sz as string)
+            set sh to (item 2 of sz as string)
+          end try
+          set m to "?"
+          try
+            set m to (value of attribute "AXMinimized" of w) as string
+          end try
+          set out to out & i & tab & t & tab & px & tab & py & tab & sw & tab & sh & tab & m & "\\n"
+        end repeat
+        return out
+      end tell
+    end tell
+  `;
+  const raw = await osascript(script);
+  return parseTsv(raw).map((row) => ({
+    axIndex: Number(row[0]),
+    title: row[1] ?? "",
+    x: Number(row[2]),
+    y: Number(row[3]),
+    width: Number(row[4]),
+    height: Number(row[5]),
+    minimized: row[6] === "true",
+  }));
+}
+
+export interface ProbeRow {
+  axIndex: number;
+  ghosttyId: string;
+  ttyPath: string;
+  command: string;
+  cwd?: string;
+}
+
+/**
+ * Brand every Ghostty child TTY with a unique sentinel title, then resolve
+ * each Ghostty window's id, AX index, tty, and foreground command.
+ *
+ * Stamps temporarily clobber window titles; the shell or Claude Code resets
+ * them on the next prompt redraw / title update.
+ */
+export async function probeWindows(): Promise<ProbeRow[]> {
+  const pid = await ghosttyPid();
+  if (pid === undefined) return [];
+
+  const { stdout: psOut } = await execa("ps", ["-axo", "pid,ppid,tty,command"]);
+  type Proc = { pid: number; ppid: number; tty: string; command: string };
+  const procs: Proc[] = [];
+  for (const line of psOut.split("\n").slice(1)) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/.exec(line);
+    if (!m) continue;
+    procs.push({ pid: Number(m[1]), ppid: Number(m[2]), tty: m[3]!, command: m[4]! });
+  }
+
+  const childTtys = new Set<string>();
+  for (const p of procs) if (p.ppid === pid && /^ttys\d+/.test(p.tty)) childTtys.add(p.tty);
+
+  const ttys = [...childTtys].sort();
+  if (ttys.length === 0) return [];
+
+  await Promise.all(
+    ttys.map((t) =>
+      fs.writeFile(`/dev/${t}`, `\x1b]2;⌬probe:${t}\x07`, { flag: "a" }).catch(() => undefined),
+    ),
+  );
+  await new Promise((r) => setTimeout(r, 250));
+
+  const ghScript = `
+    tell application id "${GHOSTTY_BUNDLE_ID}"
+      set out to ""
+      repeat with w in windows
+        set nm to (name of w as string)
+        if nm starts with "⌬probe:" then
+          set out to out & (id of w as string) & tab & nm & "\\n"
+        end if
+      end repeat
+      return out
+    end tell
+  `;
+  const ghRaw = await osascript(ghScript);
+  const ttyToGhId = new Map<string, string>();
+  for (const [id, name] of parseTsv(ghRaw)) {
+    const m = /^⌬probe:(ttys\d+)$/.exec(name ?? "");
+    if (m && id) ttyToGhId.set(m[1]!, id);
+  }
+
+  const axScript = `
+    tell application "System Events"
+      tell process "${GHOSTTY_APP_NAME}"
+        set out to ""
+        set i to 0
+        repeat with w in windows
+          set i to i + 1
+          set nm to ""
+          try
+            set nm to name of w
+          end try
+          if nm starts with "⌬probe:" then
+            set out to out & i & tab & nm & "\\n"
+          end if
+        end repeat
+        return out
+      end tell
+    end tell
+  `;
+  const axRaw = await osascript(axScript);
+  const ttyToAx = new Map<string, number>();
+  for (const [idxStr, name] of parseTsv(axRaw)) {
+    const m = /^⌬probe:(ttys\d+)$/.exec(name ?? "");
+    if (m && idxStr) ttyToAx.set(m[1]!, Number(idxStr));
+  }
+
+  // Deepest PID per tty = foreground command (latest fork).
+  const deepest = new Map<string, Proc>();
+  for (const p of procs) {
+    if (!/^ttys\d+/.test(p.tty)) continue;
+    const cur = deepest.get(p.tty);
+    if (!cur || p.pid > cur.pid) deepest.set(p.tty, p);
+  }
+
+  const cwds = await cwdsForPids([...deepest.values()].map((p) => p.pid));
+
+  const rows: ProbeRow[] = [];
+  for (const tty of ttys) {
+    const ghId = ttyToGhId.get(tty);
+    const axIdx = ttyToAx.get(tty);
+    if (!ghId || axIdx === undefined) continue;
+    const proc = deepest.get(tty);
+    rows.push({
+      axIndex: axIdx,
+      ghosttyId: ghId,
+      ttyPath: `/dev/${tty}`,
+      command: proc?.command ?? "",
+      ...(proc && cwds.get(proc.pid) ? { cwd: cwds.get(proc.pid)! } : {}),
+    });
+  }
+  return rows.sort((a, b) => a.axIndex - b.axIndex);
+}
+
+async function cwdsForPids(pids: number[]): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  if (pids.length === 0) return out;
+  try {
+    const { stdout } = await execa(
+      "lsof",
+      ["-a", "-d", "cwd", "-Fn", "-p", pids.join(",")],
+      { reject: false },
+    );
+    let currentPid: number | undefined;
+    for (const line of stdout.split("\n")) {
+      if (line.startsWith("p")) {
+        currentPid = Number(line.slice(1));
+      } else if (line.startsWith("n") && currentPid !== undefined) {
+        const path = line.slice(1);
+        if (path.startsWith("/")) out.set(currentPid, path);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return out;
+}
+
+/**
+ * Snapshot the set of Ghostty window ids (via Ghostty's own dictionary).
+ * Useful for the spawn-and-diff pattern: capture before, spawn, diff after.
+ */
+export async function listGhosttyIds(): Promise<Set<string>> {
+  const script = `
+    tell application id "${GHOSTTY_BUNDLE_ID}"
+      set out to ""
+      repeat with w in windows
+        set out to out & (id of w as string) & "\\n"
+      end repeat
+      return out
+    end tell
+  `;
+  const raw = await osascript(script);
+  return new Set(
+    raw
+      .split("\n")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
+  );
+}
+
+/** Run an AppleScript file via osascript. */
+export async function runScriptFile(path: string): Promise<void> {
+  if (process.platform !== "darwin") {
+    throw new Error("seance: AppleScript execution requires macOS");
+  }
+  await execa("osascript", [path]);
+}
+
+/**
+ * Read the current rect of each window identified by ttyPath. Uses the same
+ * sentinel-via-TTY trick as setWindowBounds, but only reads instead of moves.
+ * Returns Map<ttyPath, Rect>; missing entries mean the window couldn't be located.
+ */
+export async function currentRectsByTty(ttyPaths: string[]): Promise<Map<string, Rect>> {
+  const result = new Map<string, Rect>();
+  if (ttyPaths.length === 0) return result;
+
+  const stamp = Date.now().toString(36);
+  const stamped = ttyPaths.map((ttyPath, i) => ({
+    ttyPath,
+    sentinel: `⎈seance-read:${stamp}:${i}`,
+  }));
+
+  await Promise.all(
+    stamped.map((s) =>
+      fs.writeFile(s.ttyPath, `\x1b]2;${s.sentinel}\x07`, { flag: "a" }).catch(() => undefined),
+    ),
+  );
+  await new Promise((r) => setTimeout(r, 200));
+
+  const script = `
+    tell application "System Events"
+      tell process "${GHOSTTY_APP_NAME}"
+        set out to ""
+        repeat with w in windows
+          set nm to ""
+          try
+            set nm to name of w
+          end try
+          if nm starts with "⎈seance-read:" then
+            set p to position of w
+            set sz to size of w
+            set out to out & nm & tab & (item 1 of p as string) & tab & (item 2 of p as string) & tab & (item 1 of sz as string) & tab & (item 2 of sz as string) & "\\n"
+          end if
+        end repeat
+        return out
+      end tell
+    end tell
+  `;
+  const raw = await osascript(script);
+  const bySentinel = new Map(stamped.map((s) => [s.sentinel, s.ttyPath]));
+  for (const row of parseTsv(raw)) {
+    const [sent, x, y, w, h] = row;
+    if (!sent) continue;
+    const ttyPath = bySentinel.get(sent);
+    if (!ttyPath) continue;
+    result.set(ttyPath, {
+      x: Number(x),
+      y: Number(y),
+      width: Number(w),
+      height: Number(h),
+    });
+  }
+  return result;
+}
+
+/**
+ * Heuristic: does this title look like a default shell prompt (cwd-derived)
+ * rather than something meaningful the user set?
+ *
+ * If yes, don't fossilize it in saved state — restored windows should derive
+ * fresh titles from the new shell rather than wearing the old cwd's name.
+ */
+export function looksLikeShellDefaultTitle(title: string | undefined, cwd?: string): boolean {
+  if (!title) return true;
+  const t = title.trim();
+  if (!t) return true;
+  // bare path or ~/path
+  if (/^~?\/.+$/.test(t)) return true;
+  // user@host:path
+  if (/^[\w.-]+@[\w.-]+:.+$/.test(t)) return true;
+  if (cwd) {
+    const home = process.env.HOME ?? "";
+    const tilde = home ? cwd.replace(new RegExp("^" + escapeRegExp(home)), "~") : cwd;
+    const base = cwd.split("/").pop() ?? "";
+    if (t === cwd || t === tilde || (base && t === base)) return true;
+  }
+  return false;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function ghosttyPid(): Promise<number | undefined> {
+  try {
+    const { stdout } = await execa("ps", ["-axo", "pid,command"]);
+    for (const line of stdout.split("\n")) {
+      if (line.includes("/Ghostty.app/Contents/MacOS/")) {
+        const pid = Number(line.trim().split(/\s+/)[0]);
+        if (Number.isFinite(pid)) return pid;
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  return undefined;
 }
 
 function parseTsv(raw: string): string[][] {

@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { SeanceState } from "./types.js";
+import { BUILTIN_THEME_PAIRS } from "./themes.js";
 
 const STATE_DIR = process.env.SEANCE_HOME ?? join(homedir(), ".config", "seance");
 const STATE_FILE = join(STATE_DIR, "state.json");
@@ -20,7 +21,7 @@ export function emptyState(): SeanceState {
     version: 1,
     groups: {},
     projects: {},
-    themes: {},
+    themes: { ...BUILTIN_THEME_PAIRS },
   };
 }
 
@@ -31,12 +32,13 @@ export async function loadState(): Promise<SeanceState> {
     if (parsed.version !== 1) {
       throw new Error(`unsupported state version ${parsed.version}`);
     }
+    const parsedThemes = parsed.themes ?? {};
     return {
       ...emptyState(),
       ...parsed,
       groups: parsed.groups ?? {},
       projects: parsed.projects ?? {},
-      themes: parsed.themes ?? {},
+      themes: Object.keys(parsedThemes).length === 0 ? { ...BUILTIN_THEME_PAIRS } : parsedThemes,
     };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return emptyState();

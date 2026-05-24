@@ -17,6 +17,14 @@ import {
 } from "./groups.js";
 import { parseCustomColumns, parseGrid, tile } from "./layouts.js";
 import * as ghostty from "./ghostty.js";
+import {
+  getTheme,
+  listThemePairs,
+  parseThemeFile,
+  registerTheme,
+  resolveTheme,
+  themeFilePath,
+} from "./themes.js";
 import type { LayoutSpec, Rect, WindowRef } from "./types.js";
 
 export async function run(argv: string[]): Promise<void> {
@@ -220,18 +228,91 @@ export async function run(argv: string[]): Promise<void> {
     });
 
   theme
-    .command("apply <name>")
-    .description("Apply the group's theme via Ghostty IPC.")
+    .command("apply <group>")
+    .description("Paint the group's theme into each of its windows via OSC palette.")
     .action(async (name: string) => {
       const state = await loadState();
       const g = getGroup(state, name);
       if (!g.themeName) {
-        console.error(`group "${name}" has no theme set`);
+        console.error(`group "${name}" has no theme set — try "seance theme set ${name} <pair>"`);
         process.exitCode = 1;
         return;
       }
-      await ghostty.applyTheme(g.themeName);
-      console.log(`applied theme "${g.themeName}"`);
+      const pair = getTheme(state, g.themeName);
+      if (!pair) {
+        console.error(`unknown theme pair "${g.themeName}". See "seance theme list-pairs".`);
+        process.exitCode = 1;
+        return;
+      }
+      const appearance = await ghostty.currentAppearance();
+      const themeName = resolveTheme(pair, appearance);
+      let palette;
+      try {
+        palette = await parseThemeFile(themeFilePath(themeName));
+      } catch (err) {
+        console.error(`failed to load Ghostty theme "${themeName}": ${(err as Error).message}`);
+        process.exitCode = 1;
+        return;
+      }
+      const windows = g.windows.filter((w) => w.ttyPath);
+      if (windows.length === 0) {
+        console.error(`no TTY-tagged windows in "${name}"`);
+        process.exitCode = 1;
+        return;
+      }
+      let applied = 0;
+      for (const w of windows) {
+        try {
+          await ghostty.applyPaletteToTty(w.ttyPath!, palette);
+          applied++;
+        } catch (err) {
+          console.error(`  ${w.ttyPath}: ${(err as Error).message}`);
+        }
+      }
+      console.log(
+        `applied "${g.themeName}" → ${themeName} (${appearance}) to ${applied}/${windows.length} window(s) in "${name}"`,
+      );
+    });
+
+  theme
+    .command("list-pairs")
+    .description("List registered theme pairs (name → dark/light).")
+    .action(async () => {
+      const state = await loadState();
+      const pairs = listThemePairs(state);
+      if (pairs.length === 0) {
+        console.log("(no pairs registered)");
+        return;
+      }
+      const widths = [
+        Math.max(4, ...pairs.map((p) => p.name.length)),
+        Math.max(4, ...pairs.map((p) => p.pair.dark.length)),
+      ];
+      console.log("NAME".padEnd(widths[0]!) + "  DARK".padEnd(widths[1]! + 2) + "  LIGHT");
+      for (const { name, pair } of pairs) {
+        console.log(
+          name.padEnd(widths[0]!) + "  " + pair.dark.padEnd(widths[1]!) + "  " + pair.light,
+        );
+      }
+    });
+
+  theme
+    .command("register <name>")
+    .description("Register or overwrite a theme pair.")
+    .requiredOption("--dark <theme>", "Ghostty theme name for dark appearance")
+    .requiredOption("--light <theme>", "Ghostty theme name for light appearance")
+    .action(async (name: string, opts: { dark: string; light: string }) => {
+      const dark = opts.dark.trim();
+      const light = opts.light.trim();
+      if (!dark || !light) {
+        console.error("--dark and --light must be non-empty theme names");
+        process.exitCode = 1;
+        return;
+      }
+      const state = await loadState();
+      registerTheme(state, name, { dark, light });
+      await saveState(state);
+      console.log(`registered "${name}" (dark=${dark}, light=${light})`);
     });
 
   // ── save ─────────────────────────────────────────────────────────
@@ -340,6 +421,185 @@ export async function run(argv: string[]): Promise<void> {
         console.log(`rebind: matched ${newProbes.length} new window(s) to "${name}" by cwd`);
       }
     });
+
+  // ── init ─────────────────────────────────────────────────────────
+  program
+    .command("init [name]")
+    .description("Interactive wizard: pick windows for a group, pick a theme, apply a grid.")
+    .option("--no-theme", "skip the theme picker")
+    .option("--no-grid", "skip layout application")
+    .action(
+      async (
+        nameArg: string | undefined,
+        opts: { theme: boolean; grid: boolean },
+      ) => {
+        const state = await loadState();
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        try {
+          const name = nameArg ?? (await ask(rl, "Group name: ")).trim();
+          if (!name) {
+            console.error("init: group name required");
+            process.exitCode = 1;
+            return;
+          }
+          if (state.groups[name]) {
+            const answer = (
+              await ask(rl, `Group "${name}" exists. [r]eplace, [m]erge, [c]ancel? (m) `)
+            ).trim().toLowerCase();
+            if (answer === "c" || answer === "cancel") return;
+            if (answer === "r" || answer === "replace") {
+              deleteGroup(state, name);
+              createGroup(state, name);
+            }
+          } else {
+            createGroup(state, name);
+          }
+
+          console.log("\nDetecting Ghostty windows…");
+          const ax = await ghostty.listAllWindows();
+          const probe = await ghostty.probeWindows();
+          const probeByAx = new Map(probe.map((p) => [p.axIndex, p]));
+          if (ax.length === 0) {
+            console.error("init: no Ghostty windows detected");
+            process.exitCode = 1;
+            return;
+          }
+
+          const ttyToGroupSlot = new Map<string, string>();
+          for (const g of Object.values(state.groups)) {
+            for (const w of g.windows) {
+              if (w.ttyPath && w.slot !== undefined) {
+                ttyToGroupSlot.set(w.ttyPath, `${g.name}:${w.slot}`);
+              }
+            }
+          }
+          printWindowsTable(ax, probeByAx, ttyToGroupSlot);
+
+          const pickRaw = (
+            await ask(
+              rl,
+              `\nPick windows for "${name}" in slot order — IDX numbers separated by spaces, or "all": `,
+            )
+          ).trim();
+          let picks: number[];
+          if (pickRaw === "all") {
+            picks = ax.map((w) => w.axIndex);
+          } else {
+            picks = pickRaw
+              .split(/\s+/)
+              .map((s) => Number(s))
+              .filter((n) => Number.isInteger(n));
+          }
+          picks = picks.filter((idx) => probeByAx.has(idx));
+          if (picks.length === 0) {
+            console.error("init: no valid windows picked (need probe data — try `seance windows --probe`)");
+            process.exitCode = 1;
+            return;
+          }
+
+          for (let i = 0; i < picks.length; i++) {
+            const axIdx = picks[i]!;
+            const p = probeByAx.get(axIdx)!;
+            const axw = ax.find((w) => w.axIndex === axIdx)!;
+            const slot = i + 1;
+            const keepTitle = !ghostty.looksLikeShellDefaultTitle(axw.title, p.cwd);
+            addWindow(state, name, {
+              windowId: p.ghosttyId,
+              ...(keepTitle && axw.title ? { title: axw.title } : {}),
+              ttyPath: p.ttyPath,
+              slot,
+              ...(p.cwd ? { cwd: p.cwd } : {}),
+            });
+          }
+          console.log(`  ✓ added ${picks.length} window(s) to "${name}"`);
+
+          if (opts.theme) {
+            const pairs = listThemePairs(state);
+            console.log("\nTheme pair (Enter to skip):");
+            pairs.forEach((p, i) => {
+              console.log(`  ${i + 1}) ${p.name}  (dark=${p.pair.dark}, light=${p.pair.light})`);
+            });
+            const tRaw = (await ask(rl, "> ")).trim();
+            if (tRaw) {
+              const pick = Number(tRaw);
+              const chosen = Number.isInteger(pick) && pick >= 1 && pick <= pairs.length
+                ? pairs[pick - 1]!
+                : pairs.find((p) => p.name === tRaw);
+              if (chosen) {
+                setGroupTheme(state, name, chosen.name);
+                console.log(`  ✓ set theme "${chosen.name}"`);
+              } else {
+                console.error(`  ! unknown theme "${tRaw}", skipping`);
+              }
+            }
+          }
+
+          let layout: LayoutSpec | undefined;
+          if (opts.grid) {
+            const def = defaultGrid(picks.length);
+            const gRaw = (
+              await ask(rl, `\nLayout (e.g. 2x2, --cols 1,3) (default ${def.cols}x${def.rows}): `)
+            ).trim();
+            if (gRaw === "" || gRaw === "default") {
+              layout = def;
+            } else if (gRaw.startsWith("--cols ")) {
+              try {
+                layout = { cols: parseCustomColumns(gRaw.slice(7).trim()) };
+              } catch (err) {
+                console.error(`  ! ${(err as Error).message}, falling back to ${def.cols}x${def.rows}`);
+                layout = def;
+              }
+            } else {
+              try {
+                layout = parseGrid(gRaw);
+              } catch (err) {
+                console.error(`  ! ${(err as Error).message}, falling back to ${def.cols}x${def.rows}`);
+                layout = def;
+              }
+            }
+          }
+
+          rl.close();
+          await saveState(state);
+
+          if (layout) {
+            const screen = await ghostty.mainScreenFrame();
+            const rects = tile(screen, layout);
+            const plans = buildSlotPlans(state.groups[name]!.windows, rects);
+            if (plans.length > 0) {
+              await ghostty.activate();
+              await ghostty.setWindowBounds(plans);
+              setGroupLayout(state, name, layout);
+              await saveState(state);
+              console.log(`  ✓ arranged ${plans.length} window(s)`);
+            }
+          }
+
+          const g = state.groups[name]!;
+          if (g.themeName) {
+            const pair = getTheme(state, g.themeName);
+            if (pair) {
+              try {
+                const appearance = await ghostty.currentAppearance();
+                const themeName = resolveTheme(pair, appearance);
+                const palette = await parseThemeFile(themeFilePath(themeName));
+                const ttyWindows = g.windows.filter((w) => w.ttyPath);
+                for (const w of ttyWindows) {
+                  await ghostty.applyPaletteToTty(w.ttyPath!, palette);
+                }
+                console.log(`  ✓ painted ${ttyWindows.length} window(s) with ${themeName}`);
+              } catch (err) {
+                console.error(`  ! theme apply failed: ${(err as Error).message}`);
+              }
+            }
+          }
+
+          console.log(`\n"${name}" ready. Try:  seance summon ${name}`);
+        } finally {
+          rl.close();
+        }
+      },
+    );
 
   // ── windows ──────────────────────────────────────────────────────
   program
@@ -493,6 +753,18 @@ async function promptAssignments(): Promise<Assignment[]> {
     };
     ask();
   });
+}
+
+function ask(rl: readline.Interface, prompt: string): Promise<string> {
+  return new Promise((resolve) => rl.question(prompt, resolve));
+}
+
+/** Nearest-square grid for N panes: rows=floor(sqrt(N)), cols=ceil(N/rows). */
+function defaultGrid(n: number): { cols: number; rows: number } {
+  if (n <= 1) return { cols: 1, rows: 1 };
+  const rows = Math.max(1, Math.floor(Math.sqrt(n)));
+  const cols = Math.ceil(n / rows);
+  return { cols, rows };
 }
 
 function buildSlotPlans(

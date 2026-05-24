@@ -1,6 +1,8 @@
 import { execa } from "execa";
 import { promises as fs } from "node:fs";
 import type { Rect, WindowRef } from "./types.js";
+import type { ThemePalette } from "./themes.js";
+import type { Appearance } from "./themes.js";
 
 const GHOSTTY_BUNDLE_ID = "com.mitchellh.ghostty";
 const GHOSTTY_APP_NAME = "Ghostty";
@@ -221,21 +223,44 @@ export async function mainScreenFrame(): Promise<Rect> {
 }
 
 /**
- * Apply a Ghostty theme by name. v0 uses Ghostty's CLI `+show-config`
- * + `+set-config` if available; otherwise no-op with a warning.
+ * Apply a parsed Ghostty palette to a single window via OSC sequences
+ * written to its TTY. Per-window recoloring, no Ghostty config touched.
  *
- * NOTE: Ghostty's IPC for runtime theme swaps is still maturing.
- * This is a placeholder we'll harden once tested on a real Mac.
+ * Sequences:
+ *   OSC 4;<n>;<color> ST   per palette index 0..15
+ *   OSC 10;<color> ST       foreground
+ *   OSC 11;<color> ST       background
+ *   OSC 12;<color> ST       cursor
+ *
+ * ST is `\x1b\\`. One atomic write per TTY.
  */
-export async function applyTheme(themeName: string): Promise<void> {
+export async function applyPaletteToTty(
+  ttyPath: string,
+  palette: ThemePalette,
+): Promise<void> {
+  const ST = "\x1b\\";
+  const ESC = "\x1b]";
+  const parts: string[] = [];
+  for (let i = 0; i < 16; i++) parts.push(`${ESC}4;${i};${palette.ansi[i]}${ST}`);
+  parts.push(`${ESC}10;${palette.foreground}${ST}`);
+  parts.push(`${ESC}11;${palette.background}${ST}`);
+  parts.push(`${ESC}12;${palette.cursor}${ST}`);
+  await fs.writeFile(ttyPath, parts.join(""), { flag: "a" });
+}
+
+/**
+ * Detect the active macOS appearance via `defaults read -g AppleInterfaceStyle`.
+ * Returns "dark" when the key is "Dark", "light" when the key is absent
+ * (defaults exits non-zero) or returns anything else.
+ */
+export async function currentAppearance(): Promise<Appearance> {
   try {
-    await execa("ghostty", ["+set-config", `theme=${themeName}`]);
+    const { stdout } = await execa("defaults", ["read", "-g", "AppleInterfaceStyle"], {
+      reject: false,
+    });
+    return stdout.trim() === "Dark" ? "dark" : "light";
   } catch {
-    throw new Error(
-      `seance: failed to apply theme "${themeName}". ` +
-        `Ensure the \`ghostty\` CLI is on PATH and the theme exists. ` +
-        `Run \`ghostty +list-themes\` to verify.`,
-    );
+    return "light";
   }
 }
 

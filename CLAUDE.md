@@ -1,0 +1,149 @@
+# CLAUDE.md — seance project guidance
+
+## What this is
+
+A macOS-only TypeScript CLI for orchestrating Ghostty windows: named groups, screen-proportional grids, save/restore via runnable AppleScript, per-window theme application via OSC palette. See `README.md` for user-facing detail.
+
+## Architecture invariants (don't re-break these)
+
+1. **Window targeting goes through sentinel-via-TTY**, never Ghostty `id` ↔ AX index. Ghostty's window `id` is a tab-group identifier System Events cannot address; AX `AXIdentifier` on Ghostty windows is the literal string `"TerminalWindowRestoration"` (NSWindow autosave name), identical for every window. The two namespaces are disjoint. The only reliable bridge is writing OSC 2 to the window's TTY and matching by title in System Events. This was painfully discovered — don't propose `AXIdentifier`-based shortcuts.
+
+2. **`setWindowBounds` is a batch operation.** Never resize windows one-at-a-time in a loop: each `position` set promotes the moved window to frontmost, so the next iteration's `window 1` is the wrong window. The current implementation captures all AX references first inside a single AppleScript, then applies all rects.
+
+3. **Display geometry comes from `listScreens()` (NSScreen.visibleFrame via JXA), never Finder.** Finder's `bounds of window of desktop` returns the full display including the menu-bar zone, so tiles land under the menu bar. `listScreens()` enumerates *every* display; each screen's Cocoa `visibleFrame` (bottom-left origin) is flipped to AX coordinates (top-left, y-down) by the pure `cocoaFramesToAx` helper in `layouts.ts`, anchored to the **primary** display's full frame height — which is why secondary displays correctly land at negative AX y. Groups target a display by its **UUID** (`group.displayUuid`, from `CGDisplayCreateUUIDFromDisplayID` — which lives in **ColorSync.framework**, not CoreGraphics), never the `NSScreen.screens` index and no longer the `CGDirectDisplayID`. The index reorders on focus change; the id is reissued on reconnect, and on a DisplayLink-driven machine that happens *every replug*, because a DisplayLink display is created by a userspace agent rather than enumerated from a video port. The UUID is what macOS itself keys its remembered display arrangements on, which is why macOS restores window positions correctly across a reconnect. `group.displayId` is still written for pre-UUID state and as a fallback; `pickScreen` tries UUID first. Anything persisted must use the **full frame**, not `visibleFrame`, which moves when the Dock changes edge or auto-hides.
+
+4. **Themes apply per-window via OSC sequences**, not globally via Ghostty config. Editing `~/Library/Application Support/com.mitchellh.ghostty/config` recolors *every* Ghostty window — which defeats the per-group point. `applyPaletteToTty` writes `OSC 4`/`OSC 10`/`OSC 11`/`OSC 12` to each window's TTY. (Opacity is **not** an OSC color — Ghostty only exposes `background-opacity`/`background-blur` as *global* config, so per-pane opacity isn't achievable; per-pane differentiation is color only.)
+
+5. **WindowRef requires `ttyPath`, `slot`, and `cwd`** to be useful for `grid`/`save`. `group add` captures all three. If you add another command that consumes these, gracefully tell the user to re-`group add` when entries are missing them.
+
+6. **Ghostty 1.3.x exposes only one window (its key window) to AppleScript.** `count of windows` returns 1 while System Events sees them all, so `probeWindows` resolves windows via the System-Events title sentinel (AX) alone and `ProbeRow.ghosttyId` is **optional** — never require it (doing so made probe return zero under heavy Claude-Code load). AX only sees the **current Space**; a window stranded on another Space (common after an external display disconnects) stays alive but invisible and must be brought over (Mission Control) before seance can target it. `gather` reports such windows instead of silently skipping them.
+
+7. **Every palette goes through `guardPalette` before it reaches a TTY.** Ghostty's bundled themes reserve background-adjacent slots (ANSI 0 on dark, ANSI 7/15 on light) and the light variants are far worse than that — 9–14 of 16 slots under 4.5:1, with One Half Light's bright white at **1.04:1** against its own background. A TUI that picks a slot and writes text in it gets white on white. `enforceContrast` (pure, `contrast.ts`) lifts failing slots by moving OKLab lightness only, so hue survives; chroma is surrendered in steps only when no lightness clears the ratio. Two things are easy to get wrong: (a) contrast must be measured against the background **actually painted**, so a per-repo `background` override is folded into the palette *before* repair — never repair against the theme's own background and then paint a different one; (b) because the override is folded in, `applyPaletteToTty` alone is sufficient — don't re-add a trailing `applyBackgroundToTty` call, it would repaint the bg the palette was already measured against (harmless today, a silent trap the moment the two diverge). Cache keys for repaired palettes must include the background, not just the theme name.
+
+8. **Exactly one Ghostty instance — never `open -n`.** Anything that spawns a pane must create a window in the *running* instance via Ghostty 1.3's scripting dictionary (`new window with configuration {…}`, the record-literal form `spawnWindow` uses). `open -na Ghostty.app` starts a **second process**; the session-resume prototype did this and left eight instances alive for days. `open -a` without `-n` is not a substitute — `--args` are only honoured on a cold launch, so on a running Ghostty it activates the app and silently drops the command. The consequence that bites hardest is invisible: `ghosttyPid()` takes the **first** matching process, so perception only ever sees one instance's children. When `windows`/`arrange` report far fewer panes than are open, count instances (`pgrep -f "Ghostty.app/Contents/MacOS/" | wc -l`) before suspecting the perception code — a confidently wrong "1/1 panes" came from exactly this.
+
+9. **Scrub the Claude Code session markers when spawning a pane that runs `claude`.** A process launched from inside a Claude Code session inherits `CLAUDE_CODE_CHILD_SESSION=1` (plus `CLAUDE_CODE_SESSION_ID` and the messaging socket/token), and `open` hands that whole environment to the app it launches. The marker turns transcript saving off, so a session started under it is never written to `~/.claude/projects` and can never be resumed. Routing through the scripting dictionary already avoids it — Ghostty's own environment is used, not the caller's — but `unset` the vars in the spawned command anyway; it costs nothing and is invisible from the call site. A stray instance carried the marker, while a launchd-started Ghostty carried neither. Note `--resume`d conversations still append to their existing transcript, so the marker suppresses *new* transcripts rather than destroying history.
+
+## Module boundaries
+
+```
+pure (testable on Linux):      layouts.ts, groups.ts, state.ts, themes.ts, contrast.ts, save.ts,
+                               policy.ts, arrange.ts
+impure (macOS-only):           ghostty.ts (osascript + JXA + TTY writes + execa)
+composition:                   cli.ts (commander wiring)
+```
+
+Anything that shells out to `osascript`, writes to `/dev/ttysNNN`, or reads from `/Applications/Ghostty.app/...` belongs in `ghostty.ts`. Don't leak `execa` calls into pure modules.
+
+## Scope boundaries (active)
+
+- **`docs/themes-preview.html` is product-frozen.** It is the source of truth for the 7 curated theme pair names (Catppuccin, Rose Pine, Gruvbox Material, Ayu, Selenized, Modus, Night Owl). Don't reshape `ThemePair`, `resolveTheme`, or `BUILTIN_THEME_PAIRS` without checking with the user.
+- The theme catalog (which themes are in the BUILTIN_THEME_PAIRS list) is owned by a separate stream of work that lives in `docs/themes-preview.html`. The *application* path (`theme apply`, OSC palette writing) is owned in `src/cli.ts` / `src/ghostty.ts` / `src/themes.ts` and is fair game.
+
+## Build / test / dev
+
+```bash
+npm install
+npm run build         # tsc → dist/
+npm test              # vitest, all suites
+npm run typecheck     # strict typecheck, no emit
+npm run dev -- <args> # tsx src/cli.ts; tests use the same entry
+npm link              # symlink global `seance` → checkout (live edits)
+```
+
+TypeScript is strict: `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`. Optional properties cannot be assigned `undefined` directly — use spread-with-conditional (`...(x ? { foo: x } : {})`).
+
+## Releasing (the project is public, so every user-visible change ships)
+
+A change users can see is not done until it is released. In the same pass:
+
+1. Bump `version` in `package.json` (semver; `seance --version` reads it).
+2. Add an entry at the top of `CHANGELOG.md`: a one-line headline, then short
+   bullets in plain words about what the user will notice, and an **Action:**
+   line if they must do anything (restart the watcher, re-run an install).
+3. For anything beyond a small fix, write `docs/releases/<version>.md`: *What
+   you'll notice*, *Do I need to do anything?*, then *Under the hood* for root
+   causes and numbers. User-facing first, post-mortem second.
+   Tone: a developer telling a friend what broke and what they did about it.
+   First person, short sentences, a little dry. Concrete about the software,
+   never about the owner's own setup, hardware, logs or usage.
+   Every number still comes from a measurement.
+4. Commit, tag `v<version>` on that commit, push the commit and the tag, then
+   `gh release create v<version> --title "<version>: <headline>" --notes-file
+   <notes>` using the changelog entry plus a link to the full notes. Unwrap the
+   paragraphs first: GitHub renders every newline in a release body.
+   `gh release delete --cleanup-tag` deletes the local tag as well as the remote one.
+
+**Never describe the owner's setup** (desks, display counts, docks, laptops, their logs,
+"one of mine" anecdotes) in anything public. Describe the software instead.
+
+**Never name another repo.** Not in notes, docs, tests, comments or commit
+messages. Say "a repo" or use an invented placeholder (`zephyr`, `mercury`,
+`maple`). Check new placeholders against real repo names before using them.
+
+Internal-only work (todo, CLAUDE.md, tests, refactors with no behaviour change)
+needs no release. Several user-visible commits in a day can share one release.
+
+## Testing patterns
+
+- **Pure modules:** `vitest` unit tests in `src/<name>.test.ts`. No mocking — they're pure.
+- **CLI black-box:** `src/cli.test.ts` spawns `tsx src/cli.ts` in an `mkdtemp` dir with `SEANCE_HOME=<tmpdir>` env injected. No shared state between tests, no Ghostty calls.
+- **Anything touching System Events / TTYs / Ghostty AppleScript:** manual verification only. Document the steps in the PR description.
+
+## Coding style preferences (per user, learned)
+
+- Stay in TypeScript. Rust rewrite was considered and explicitly deferred.
+- No comments unless the *why* is non-obvious. Identifiers explain *what*.
+- Don't add features, refactors, or abstractions beyond what the task requires.
+- Don't add error handling for impossible cases. Validate at boundaries only.
+- One commit per coherent unit. Single commit is fine for multi-feature work when commits would be artificial.
+- Default to acting; ask only when a decision has irreversible consequences or genuinely changes the design.
+
+## Known limitations
+
+- macOS only. Linux Ghostty has no AppleScript dictionary; the AX path doesn't exist.
+- Multi-display works (`grid --screen <n>`, `seance screens`), but two macOS realities remain: (a) a window on another **Space** is invisible to Accessibility, so seance can't tile it until it's on the current Space — externals that cycle on/off strand windows this way (`gather` surfaces them); (b) display *geometry* is not identity — two identical monitors can share size, position-independent name, vendor and model, so only the UUID separates them.
+- **Exact tiling is impossible.** Ghostty snaps a window to whole character cells, and cell size follows each pane's own font size, so a requested rect is rounded unpredictably (measured: 548x540 → 548x602, 432x1079 → 443x1021). `setWindowBounds` verifies the *origin* only, within a 40px tolerance — macOS also refuses to seat a title bar flush against a display's top edge, a consistent ~25px push down. Windows that grow past their cell are nudged back so they stay on their assigned display, at the cost of overlapping the neighbour above.
+- `cwd` for `windows --assign` comes from `lsof` against the foreground PID — may return nothing for sandboxed children (e.g. some Claude Code invocations).
+- TTY-based identity dies with the shell. Closing a window invalidates its `ttyPath`; you have to `group add` again from the new shell.
+
+## Recent significant decisions (log)
+
+- **2026-05-24:** Per-window OSC palette is the theming model (not global config swap). Drives `applyPaletteToTty`, reads Ghostty's bundled theme files at `/Applications/Ghostty.app/Contents/Resources/ghostty/themes/<name>`.
+- **2026-05-24:** Targeting moved from "Ghostty id → AX index" (broken) to sentinel-via-TTY (works). Captured in invariant 1.
+- **2026-05-24:** `save` emits a self-contained runnable AppleScript (gtab-inspired storage model). `restore` runs it via `osascript`; `--rebind` re-probes and updates state.
+- **2026-05-24:** `group add` requires the slot/ttyPath/cwd trio. Pre-existing entries from earlier versions need re-adding.
+- **2026-06-27:** Multi-display targeting. `listScreens()` enumerates all displays (pure `cocoaFramesToAx` flip, anchored to primary frame height); groups store a stable `CGDirectDisplayID`, not the volatile `NSScreen.screens` index. New: `seance screens`, `grid --screen <n>`, `summon`/`init` honour the saved display. Captured in invariant 3.
+- **2026-06-27:** Ghostty 1.3.x exposes only its key window to AppleScript. `probeWindows` reworked to resolve via the AX sentinel alone; `ProbeRow.ghosttyId` made optional. This unblocked `windows --probe`/`--assign`/`init`, which had been returning zero windows under heavy Claude-Code load (first misdiagnosed as a title race). Captured in invariant 6.
+- **2026-06-27:** `gather` added — re-tiles the windows reachable on the current Space and reports the rest as stranded (with each one's foreground command, e.g. `claude --resume <uuid>`) instead of failing silently.
+- **2026-06-27:** Window cleanup labels show the repo (basename of cwd) instead of the raw tty.
+- **2026-08-06:** `organize` takes an optional grid (`seance organize 3x2 [--screen n] [--pin]`, `organize auto`). Transient by default; `--pin` writes the grid onto the placement rules of the repos on the affected displays, which is how a display-level shape becomes durable in a per-repo policy schema.
+- **2026-08-06:** In-Alfred cheatsheet (`seance cheatsheet`, `s help`) rendered by Alfred's Text View. It is reached by an **external trigger**, not by routing the Script Filter result: `seance cheatsheet --alfred` calls back into Alfred via AppleScript. A Conditional keyed on a Script-Filter item variable was tried first and never fired on Alfred 5.6 — every action fell through to the else branch (verified by bypassing the conditional, which rendered the view correctly). Don't re-litigate this with a Conditional.
+- **2026-07-06:** Per-group background override (`seance background`), later made appearance-aware (`{dark, light}`). `SeanceState.appearance` + `seance appearance <dark|light|auto>` force a fixed appearance overriding macOS. Root cause it addresses: Claude Code renders with its *own* fixed theme and its *own* text color (not the terminal's), so a light terminal under Claude's dark theme shows light-on-light invisible text. On light backgrounds Claude's dimmed text also washes out (measured: every light theme ≈2:1 dimmed contrast vs ≈2.4–4.4:1 for dark). Fix at the time was to match the terminal to Claude — pin `appearance dark`. **Superseded 2026-08-07** — light is now usable in both directions.
+- **2026-08-07:** `appearance light` was still unreadable. Two independent causes, both fixed, plus one hazard removed.
+  1. **Claude Code's own theme wasn't following.** Only its *default* text uses the terminal's foreground; everything non-plain (dim status lines, file paths, error banners, diff blocks) comes from a fixed palette selected by `theme` in `~/.claude/settings.json`. Dark there + light terminal = washed-out accents that no OSC write can reach. `seance appearance` now writes that key too, preserving any `-ansi`/`-daltonized` variant. **Running sessions keep the theme they booted with** — this only takes effect on restart or `/config`, which is why the fix looks like it didn't work if you only check the pane you ran it from. `CLAUDE_CONFIG_DIR` is honoured so `cli.test.ts` can't touch the real file.
+
+     Measured, not assumed — spawn `claude` in a pty under each value and diff the raw bytes (`scratchpad/probe.py` pattern): identical output length, identical 8 colour spans, completely different colours. `light` → dim `#666666`, accent `#5769f7`, warn `#966c1e`; `dark` → `#999999`, `#b1b9f9`, `#ffc107`. Two consequences worth keeping: Claude Code emits **24-bit truecolor** (`ESC[38;2;r;g;b`), never palette indices, so invariant 7's guard provably cannot reach its chrome — don't ever "fix" Claude Code's colours by touching the palette. And the key is read **at process start**, so any verification done in an already-running pane measures the old value.
+  2. **seance was writing genuinely unreadable palettes.** See invariant 7. New pure module `contrast.ts`, new `seance contrast [ratio|off]` (default 4.5, stored as `state.minContrast`). Verified: 1080 slots across 13 pairs × 2 appearances × 3 backgrounds, zero below 4.5:1 after repair.
+  3. **A legacy `claude()` zsh wrapper in the user's shell config was fighting seance.** It called `ghostty-theme apply-for-repo` on every launch, repainting from an all-dark, appearance-unaware rotation. Retired (the `ghostty-theme` commands remain for manual use). If pane colour ever reverts on `claude` startup again, look for a shell shim before suspecting seance.
+- **2026-08-09:** Writing `theme` once is not enough, so the watcher re-asserts it. **Claude Code rewrites the whole of `~/.claude/settings.json` from its own in-memory state whenever any setting changes via `/config`** — so a long-lived session that booted under the old theme silently reverts the key, and every session started *after* that inherits the reverted value. Symptom: sessions started a day *after* `appearance light` still booted dark, and a diff of the file showed unrelated `/config` edits carried in alongside the reverted `theme`. `watchLoop` now calls `syncClaudeCodeTheme` every pass; verified self-heal in ~6s.
+  - **Don't gate periodic work in `watchLoop` on `tick % n`.** A tick is one iteration of a loop whose body does `osascript` + `lsof` and can take many seconds — `tick % 15` was silently minutes, not the 30s it reads as. Gate on wall clock, or (better, when the work is a small file read) just do it every pass.
+  - When a self-heal check fails, verify `state.appearance` **before** suspecting the sync code: the watcher asserts seance's appearance, so sabotaging the file toward the value seance already wants is a no-op that looks identical to a broken sync.
+- **2026-08-18:** The session-resume prototype was spawning panes with `open -na Ghostty.app`, which is how eight surplus Ghostty instances ended up running for days, and how `CLAUDE_CODE_CHILD_SESSION=1` reached every restored conversation. Both are now invariants 8 and 9. Fixed in `docs/prototypes/session-resume/serve.py`. Two defects in that prototype are known and unfixed by design — it has no de-duplication, and its `cwd.replace("/", "-")` slug breaks on any path containing a dot, which `projectDirNameForCwd` in `src/sessions.ts` gets right.
+- **2026-08-29:** Display identity moved from `CGDirectDisplayID` to the display **UUID**, after auditing how DisplayLink drives a display. A DisplayLink monitor is not attached to the GPU: `DisplayLinkUserAgent` creates a virtual display, captures its framebuffer (which is why Screen Recording permission is the transport, not a nicety), compresses, and ships frames over USB to the dock. Because the display is *created* rather than enumerated from a port, macOS issues a fresh id every time the agent brings it up. Everything keyed on the id was therefore stale on every replug: `knownDisplaySets` (so 2.2.3's "don't reflow a familiar arrangement" never recognised one) and `group.displayId` (so every group silently fell back to main). `CGDisplayCreateUUIDFromDisplayID` is in **ColorSync.framework**, not CoreGraphics — a CoreGraphics lookup fails with a bare *symbol not found*. Proof the UUID is stable: `com.apple.windowserver.displays` holds remembered arrangements, all keyed by UUID, and a panel's UUID recurs across 2-, 3- and 4-display setups. That is also why macOS restores window positions correctly and seance was overwriting a correct restore. Signatures now use the **full frame** too, since `visibleFrame` moves with the Dock.
+- **2026-09-30:** A repo's colour is now fixed for life, and open repos are made to look different, not just be assigned different themes. Four defects, found from a month of watcher logs.
+  1. **Identity came from the pane's newest process.** On a busy Claude pane that is a transient child (a Bash tool call, `caffeinate`, an MCP server); when it exited between `ps` and `lsof` the pane read as `home` and was repainted (one repo flipped hundreds of times in a month). Identity now comes from the shell `login` started (`selectPaneProcesses`, pure, in `policy.ts`), folded to the git repo root, with linked worktrees mapped to the repo that owns them. The command reported per pane is the shell's foreground job, which also fixes session snapshots recording `caffeinate` instead of `claude`.
+  2. **Collision losers were recoloured permanently.** `assignThemes` is write-once now: an existing repo never changes pair. A new repo takes a pair no open repo wears, least-worn first. Open repos that still share a pair are separated at paint time by `liveShades` / `shadeBackground`, never persisted.
+  3. **Distinct themes painted the same dark grey.** Each repo also gets a write-once background `tint` (`pickTint` in `contrast.ts`), chosen against the backgrounds of the repos open beside it, and folded in before the contrast guard like any override. Distance weights hue over lightness: plain OKLab called black vs near-black and light vs dark green distinct, and on screen they are not. More themes would not help: the remaining candidates are more near-black backgrounds.
+  4. **The launchd watcher was running a deleted copy** from an agent worktree under `$TMPDIR`. `watch --install` now refuses a temporary checkout. If a fix looks inert, check `ProgramArguments` in the plist before anything else.
+  - Also: the watcher no longer reflows onto **fewer** displays (`reflowDecision`). A dock replug brings screens back in stages; one stage settled, was unknown, and every pane was packed onto two screens that then stuck, because the full set returned as known. `setWindowBounds` now checks size as well as origin (`sizeTook`): a window moved onto another display can land at the right origin with its old size, and was being reported placed. `arrange --in-place` tiles each display where its panes already are, the only way to lay out a fourth or fifth display while roles stop at three.
+- **2026-10-04:** `arrange` uses every display, not three roles. With a 2x2 of externals above the laptop it left the right column empty and piled six panes onto one screen. Three changes:
+  1. **`computeRoles` takes the nearest external on each side of main**, not the first two by x. Two stacked screens share an x, so both roles landed in the left column. Falls back to the x order only when every external is on one side.
+  2. **`assignFamilies` balances over all connected displays.** Displays beyond the roles are labelled `display <n>` and remembered in `autoPlacement` by UUID; roles are still remembered as roles.
+  3. **A display that holds a pinned repo is reserved for pinned repos** ("repo X on that screen" means X's screen). Rules take an optional `display` UUID, which `place --screen` now writes, so a pin can reach a screen no role names; `role` is the fallback while it is disconnected. `organize` honours `display` too.
+- **2026-08-15:** `seance arrange` — the automatic counterpart to `organize`, in new pure module `arrange.ts`. `organize` is deliberately untouched and stays the "I want *this shape*" verb; `arrange` decides the shape itself. Four things worth not rediscovering:
+  1. **Tile the active panes, paint all of them.** A minimized pane must be excluded *before* `setWindowBounds`, not after — that function focuses each target to migrate it onto the current Space, which would undo the user's ⌘M. But OSC writes reach a minimized window's TTY fine, so painting still iterates every live pane and a restored window is already the right colour. Detection joins the AX view to the TTY view through the existing invariant-1 sentinel (`windowStatesByTty`, now the single implementation with `currentRectsByTty` a wrapper over it), gated on a cheap `listAllWindows()` that answers "is anything minimized at all" — normally no, so the sentinel round-trip and its title flash are normally skipped. An *unresolved* sentinel means active, never minimized: `setWindowBounds` retries 5 rounds and migrates Spaces, so it resolves strictly better than a single-shot read.
+  2. **`arrange` ignores the `"*"` placement rule; `organize` obeys it.** `ensurePolicy` seeds `{repo:"*", role:"main"}` for everyone, so honouring it would mean every repo is "explicitly placed" and balancing could never engage. That asymmetry *is* the division of labour between the two verbs — don't unify it, and don't migrate the seeded rule away either (that would change `organize`).
+  3. **The layout constant is derived, not tuned.** Target pane aspect `9/16` is the geometric mean of every layout this project historically tiled to (4×1 and 4×2 on 1728×1047, 2×1 on the same, 5×1 on 1920×1080) to within 0.05% — *a pane should be as portrait as the display is landscape*. What actually reproduces those anchors is the **no-empty-row-or-column prune**, not the waste weight: all four survive any weight in `[0, 8]`. Don't spend an afternoon tuning `WASTE_WEIGHT`.
+  4. **Auto display assignment is policy, not a binding, so it persists** — in its own `state.autoPlacement`, never in `state.placement` (which `organize` reads). A *role* is recomputed from live geometry each run, unlike an NSScreen index or a `CGDirectDisplayID`. Hysteresis on re-derivation gives both stability and free rebalancing: a vanished display's role stops resolving, a new one has fill 0 and wins immediately — no signature field, no explicit rebalance trigger.
+  - Incidental fix in the same pass: `currentRectsByTty`'s script read `position of w` / `size of w` unguarded, so a single minimized window could raise and abort the whole `repeat`, silently returning **zero** rows to `gather` and `save`. Both reads are now `try`-wrapped like `listAllWindows` does.

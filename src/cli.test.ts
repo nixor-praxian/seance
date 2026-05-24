@@ -129,4 +129,45 @@ describe("seance CLI (black-box, SEANCE_HOME isolated)", () => {
       await expect(fs.access(join(dir, "state.json"))).rejects.toThrow();
     });
   });
+
+  it("theme list-pairs shows the 7 builtin pairs on a fresh state", async () => {
+    await withSeanceDir(async (dir) => {
+      const r = await runSeance(["theme", "list-pairs"], dir);
+      expect(r.exitCode).toBe(0);
+      for (const name of [
+        "Catppuccin",
+        "Rose Pine",
+        "Gruvbox Material",
+        "Ayu",
+        "Selenized",
+        "Modus",
+        "Night Owl",
+      ]) {
+        expect(r.stdout).toContain(name);
+      }
+    });
+  });
+
+  it("theme apply errors gracefully when the group has no themeName", async () => {
+    await withSeanceDir(async (dir) => {
+      await runSeance(["group", "new", "demo"], dir);
+      const r = await runSeance(["theme", "apply", "demo"], dir);
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr).toContain("no theme set");
+    });
+  });
+
+  it("theme register persists a new pair", async () => {
+    await withSeanceDir(async (dir) => {
+      const r = await runSeance(
+        ["theme", "register", "cobalt", "--dark", "Cobalt2", "--light", "Cobalt Neon"],
+        dir,
+      );
+      expect(r.exitCode).toBe(0);
+      const list = await runSeance(["theme", "list-pairs"], dir);
+      expect(list.stdout).toContain("cobalt");
+      expect(list.stdout).toContain("Cobalt2");
+      expect(list.stdout).toContain("Cobalt Neon");
+    });
+  });
 });

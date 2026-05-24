@@ -18,8 +18,19 @@ export interface CustomColumnsSpec {
 export type LayoutSpec = GridSpec | CustomColumnsSpec;
 
 export interface WindowRef {
-  windowId: number;
+  windowId: string;
   title?: string;
+  /**
+   * Controlling TTY path (e.g. /dev/ttys002) captured at `group add` time.
+   * Used at tile time to brand the window with a unique title sentinel via OSC 2,
+   * which is then matched in System Events. Without this, AX window targeting
+   * is ambiguous (Ghostty's `id` is a tab-group id System Events can't see).
+   */
+  ttyPath?: string;
+  /** 1-indexed grid slot. slot 1 = top-left, then row-major. */
+  slot?: number;
+  /** Working directory captured at `group add` time. Used by `seance save`. */
+  cwd?: string;
 }
 
 export interface Group {

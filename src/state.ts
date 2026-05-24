@@ -5,9 +5,14 @@ import type { SeanceState } from "./types.js";
 
 const STATE_DIR = process.env.SEANCE_HOME ?? join(homedir(), ".config", "seance");
 const STATE_FILE = join(STATE_DIR, "state.json");
+const SAVES_DIR = join(STATE_DIR, "saves");
 
 export function statePath(): string {
   return STATE_FILE;
+}
+
+export function savesDir(): string {
+  return SAVES_DIR;
 }
 
 export function emptyState(): SeanceState {

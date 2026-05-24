@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ghostty paired themes — light + dark</title>
+<style>
+  * { box-sizing: border-box; }
+  html {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    background: #0d0d10;
+    color: #e8e8ea;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { margin: 0; padding: 48px 24px 80px; }
+  .wrap { max-width: 1240px; margin: 0 auto; }
+  header.page {
+    margin-bottom: 56px;
+  }
+  h1 {
+    font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px;
+  }
+  .sub {
+    color: #9d9da3; font-size: 15px; max-width: 720px; line-height: 1.5;
+  }
+  .sub code {
+    background: #1a1a1f; padding: 2px 7px; border-radius: 4px;
+    font-size: 13px; color: #c5c5cc;
+  }
+  section.pair {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 32px;
+    padding: 28px 0;
+    border-top: 1px solid #1f1f24;
+    align-items: start;
+  }
+  section.pair:first-of-type { border-top: none; }
+  .meta h2 {
+    font-size: 22px; font-weight: 600; margin: 0 0 8px; letter-spacing: -0.01em;
+  }
+  .meta .blurb {
+    color: #9d9da3; font-size: 13px; line-height: 1.5; margin: 0 0 14px;
+  }
+  .meta .cfg {
+    display: block;
+    font-family: ui-monospace, "SF Mono", "Menlo", monospace;
+    font-size: 11.5px;
+    background: #1a1a1f;
+    border: 1px solid #28282f;
+    color: #c5c5cc;
+    padding: 9px 11px;
+    border-radius: 6px;
+    word-break: break-all;
+    line-height: 1.45;
+  }
+  .duo {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  article.term {
+    background: var(--bg);
+    color: var(--fg);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 14px 40px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.04);
+  }
+  .tbar {
+    background: rgba(0,0,0,0.18);
+    padding: 9px 12px;
+    display: flex; align-items: center; gap: 12px;
+    font-size: 11.5px;
+    color: rgba(255,255,255,0.55);
+    backdrop-filter: blur(8px);
+  }
+  /* light themes get a softer tbar overlay */
+  .term[style*="--bg:#f"] .tbar,
+  .term[style*="--bg:#e"] .tbar,
+  .term[style*="--bg:#d"] .tbar {
+    background: rgba(0,0,0,0.06);
+    color: rgba(0,0,0,0.45);
+  }
+  .dots { display: inline-flex; gap: 6px; }
+  .dots i {
+    width: 11px; height: 11px; border-radius: 50%;
+    display: inline-block;
+  }
+  .ttitle {
+    font-family: ui-monospace, "SF Mono", "Menlo", monospace;
+    font-size: 11px;
+    letter-spacing: 0.01em;
+  }
+  pre.screen {
+    margin: 0;
+    padding: 16px 18px 12px;
+    font-family: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 268px;
+  }
+  .cur {
+    background: var(--cursor);
+    color: var(--bg);
+    display: inline-block;
+    width: 0.6em;
+    animation: blink 1.1s steps(1) infinite;
+  }
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+  pre.screen ::selection {
+    background: var(--selbg);
+    color: var(--selfg);
+  }
+  .strip {
+    display: grid;
+    grid-template-columns: repeat(16, 1fr);
+    height: 14px;
+    border-top: 1px solid rgba(0,0,0,0.12);
+  }
+  .sw { display: block; }
+  footer.page {
+    margin-top: 80px;
+    padding-top: 24px;
+    border-top: 1px solid #1f1f24;
+    color: #6b6b71;
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+  footer.page code {
+    background: #1a1a1f; padding: 1px 6px; border-radius: 3px;
+    color: #9d9da3; font-size: 11.5px;
+  }
+  footer.page a { color: #9d9da3; }
+  h3.section-h {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #c5c5cc;
+    margin: 0 0 6px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid #28282f;
+  }
+  h3.section-h .muted {
+    color: #6b6b71;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    margin-left: 8px;
+  }
+  .section-sub {
+    color: #9d9da3;
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 8px 0 18px;
+    max-width: 720px;
+  }
+  .section-sub em {
+    color: #c5c5cc;
+    font-style: italic;
+  }
+  @media (max-width: 880px) {
+    section.pair { grid-template-columns: 1fr; gap: 18px; }
+    .duo { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page">
+    <h1>Ghostty paired themes</h1>
+    <p class="sub">
+      Light + dark pairs that auto-switch with the OS appearance via
+      <code>theme = dark:…,light:…</code>. Each card uses the theme's actual ANSI palette;
+      the strip under each terminal is palette 0–15.
+    </p>
+  </header>
+
+  
+<section class="pair">
+  <div class="meta">
+    <h2>Catppuccin</h2>
+    <p class="blurb">Pastel · soft · blue-tinted.</p>
+    <code class="cfg">theme = dark:Catppuccin Mocha,light:Catppuccin Latte</code>
+  </div>
+  <div class="duo">
+    
+<article class="term" style="--bg:#1e1e2e;--fg:#cdd6f4;--cursor:#f5e0dc;--selbg:#585b70;--selfg:#cdd6f4">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Catppuccin Mocha</span>
+  </header>
+  <pre class="screen"><span style="color:#a6e3a1">~/code/seance</span> <span style="color:#f5c2e7">❯</span> git status
+<span style="color:#585b70">On branch </span><span style="color:#94e2d5">main</span>
+<span style="color:#585b70">Your branch is ahead of </span><span style="color:#f5c2e7">origin/main</span><span style="color:#585b70"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#f38ba8">modified:   src/ghostty.ts</span>
+  <span style="color:#f38ba8">modified:   src/groups.ts</span>
+
+<span style="color:#a6e3a1">~/code/seance</span> <span style="color:#f5c2e7">❯</span> <span style="color:#f9e2af">cat</span> src/types.ts <span style="color:#585b70">| head -6</span>
+<span style="color:#f5c2e7">export</span> <span style="color:#f5c2e7">interface</span> <span style="color:#f9e2af">Rect</span> <span style="color:#cdd6f4">{</span>
+  <span style="color:#94e2d5">x</span><span style="color:#cdd6f4">:</span> <span style="color:#f5c2e7">number</span><span style="color:#cdd6f4">;</span>
+  <span style="color:#94e2d5">y</span><span style="color:#cdd6f4">:</span> <span style="color:#f5c2e7">number</span><span style="color:#cdd6f4">;</span>
+  <span style="color:#94e2d5">width</span><span style="color:#cdd6f4">:</span> <span style="color:#f5c2e7">number</span><span style="color:#cdd6f4">;</span>
+  <span style="color:#94e2d5">height</span><span style="color:#cdd6f4">:</span> <span style="color:#f5c2e7">number</span><span style="color:#cdd6f4">;</span>
+<span style="color:#cdd6f4">}</span>
+
+<span style="color:#a6e3a1">~/code/seance</span> <span style="color:#f5c2e7">❯</span> <span style="color:#585b70"># theme: Catppuccin Mocha</span>
+<span style="color:#a6e3a1">~/code/seance</span> <span style="color:#f5c2e7">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#45475a" title="palette 0"></span><span class="sw" style="background:#f38ba8" title="palette 1"></span><span class="sw" style="background:#a6e3a1" title="palette 2"></span><span class="sw" style="background:#f9e2af" title="palette 3"></span><span class="sw" style="background:#89b4fa" title="palette 4"></span><span class="sw" style="background:#f5c2e7" title="palette 5"></span><span class="sw" style="background:#94e2d5" title="palette 6"></span><span class="sw" style="background:#a6adc8" title="palette 7"></span><span class="sw" style="background:#585b70" title="palette 8"></span><span class="sw" style="background:#f37799" title="palette 9"></span><span class="sw" style="background:#89d88b" title="palette 10"></span><span class="sw" style="background:#ebd391" title="palette 11"></span><span class="sw" style="background:#74a8fc" title="palette 12"></span><span class="sw" style="background:#f2aede" title="palette 13"></span><span class="sw" style="background:#6bd7ca" title="palette 14"></span><span class="sw" style="background:#bac2de" title="palette 15"></span></div>
+</article>
+    
+<article class="term" style="--bg:#eff1f5;--fg:#4c4f69;--cursor:#dc8a78;--selbg:#acb0be;--selfg:#4c4f69">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Catppuccin Latte</span>
+  </header>
+  <pre class="screen"><span style="color:#40a02b">~/code/seance</span> <span style="color:#ea76cb">❯</span> git status
+<span style="color:#6c6f85">On branch </span><span style="color:#179299">main</span>
+<span style="color:#6c6f85">Your branch is ahead of </span><span style="color:#ea76cb">origin/main</span><span style="color:#6c6f85"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#d20f39">modified:   src/ghostty.ts</span>
+  <span style="color:#d20f39">modified:   src/groups.ts</span>
+
+<span style="color:#40a02b">~/code/seance</span> <span style="color:#ea76cb">❯</span> <span style="color:#df8e1d">cat</span> src/types.ts <span style="color:#6c6f85">| head -6</span>
+<span style="color:#ea76cb">export</span> <span style="color:#ea76cb">interface</span> <span style="color:#df8e1d">Rect</span> <span style="color:#4c4f69">{</span>
+  <span style="color:#179299">x</span><span style="color:#4c4f69">:</span> <span style="color:#ea76cb">number</span><span style="color:#4c4f69">;</span>
+  <span style="color:#179299">y</span><span style="color:#4c4f69">:</span> <span style="color:#ea76cb">number</span><span style="color:#4c4f69">;</span>
+  <span style="color:#179299">width</span><span style="color:#4c4f69">:</span> <span style="color:#ea76cb">number</span><span style="color:#4c4f69">;</span>
+  <span style="color:#179299">height</span><span style="color:#4c4f69">:</span> <span style="color:#ea76cb">number</span><span style="color:#4c4f69">;</span>
+<span style="color:#4c4f69">}</span>
+
+<span style="color:#40a02b">~/code/seance</span> <span style="color:#ea76cb">❯</span> <span style="color:#6c6f85"># theme: Catppuccin Latte</span>
+<span style="color:#40a02b">~/code/seance</span> <span style="color:#ea76cb">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#5c5f77" title="palette 0"></span><span class="sw" style="background:#d20f39" title="palette 1"></span><span class="sw" style="background:#40a02b" title="palette 2"></span><span class="sw" style="background:#df8e1d" title="palette 3"></span><span class="sw" style="background:#1e66f5" title="palette 4"></span><span class="sw" style="background:#ea76cb" title="palette 5"></span><span class="sw" style="background:#179299" title="palette 6"></span><span class="sw" style="background:#acb0be" title="palette 7"></span><span class="sw" style="background:#6c6f85" title="palette 8"></span><span class="sw" style="background:#de293e" title="palette 9"></span><span class="sw" style="background:#49af3d" title="palette 10"></span><span class="sw" style="background:#eea02d" title="palette 11"></span><span class="sw" style="background:#456eff" title="palette 12"></span><span class="sw" style="background:#fe85d8" title="palette 13"></span><span class="sw" style="background:#2d9fa8" title="palette 14"></span><span class="sw" style="background:#bcc0cc" title="palette 15"></span></div>
+</article>
+  </div>
+</section>
+<section class="pair">
+  <div class="meta">
+    <h2>Rose Pine</h2>
+    <p class="blurb">Muted · soho-designer · pink-grey.</p>
+    <code class="cfg">theme = dark:Rose Pine,light:Rose Pine Dawn</code>
+  </div>
+  <div class="duo">
+    
+<article class="term" style="--bg:#191724;--fg:#e0def4;--cursor:#e0def4;--selbg:#403d52;--selfg:#e0def4">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Rose Pine</span>
+  </header>
+  <pre class="screen"><span style="color:#31748f">~/code/seance</span> <span style="color:#c4a7e7">❯</span> git status
+<span style="color:#6e6a86">On branch </span><span style="color:#ebbcba">main</span>
+<span style="color:#6e6a86">Your branch is ahead of </span><span style="color:#c4a7e7">origin/main</span><span style="color:#6e6a86"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#eb6f92">modified:   src/ghostty.ts</span>
+  <span style="color:#eb6f92">modified:   src/groups.ts</span>
+
+<span style="color:#31748f">~/code/seance</span> <span style="color:#c4a7e7">❯</span> <span style="color:#f6c177">cat</span> src/types.ts <span style="color:#6e6a86">| head -6</span>
+<span style="color:#c4a7e7">export</span> <span style="color:#c4a7e7">interface</span> <span style="color:#f6c177">Rect</span> <span style="color:#e0def4">{</span>
+  <span style="color:#ebbcba">x</span><span style="color:#e0def4">:</span> <span style="color:#c4a7e7">number</span><span style="color:#e0def4">;</span>
+  <span style="color:#ebbcba">y</span><span style="color:#e0def4">:</span> <span style="color:#c4a7e7">number</span><span style="color:#e0def4">;</span>
+  <span style="color:#ebbcba">width</span><span style="color:#e0def4">:</span> <span style="color:#c4a7e7">number</span><span style="color:#e0def4">;</span>
+  <span style="color:#ebbcba">height</span><span style="color:#e0def4">:</span> <span style="color:#c4a7e7">number</span><span style="color:#e0def4">;</span>
+<span style="color:#e0def4">}</span>
+
+<span style="color:#31748f">~/code/seance</span> <span style="color:#c4a7e7">❯</span> <span style="color:#6e6a86"># theme: Rose Pine</span>
+<span style="color:#31748f">~/code/seance</span> <span style="color:#c4a7e7">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#26233a" title="palette 0"></span><span class="sw" style="background:#eb6f92" title="palette 1"></span><span class="sw" style="background:#31748f" title="palette 2"></span><span class="sw" style="background:#f6c177" title="palette 3"></span><span class="sw" style="background:#9ccfd8" title="palette 4"></span><span class="sw" style="background:#c4a7e7" title="palette 5"></span><span class="sw" style="background:#ebbcba" title="palette 6"></span><span class="sw" style="background:#e0def4" title="palette 7"></span><span class="sw" style="background:#6e6a86" title="palette 8"></span><span class="sw" style="background:#eb6f92" title="palette 9"></span><span class="sw" style="background:#31748f" title="palette 10"></span><span class="sw" style="background:#f6c177" title="palette 11"></span><span class="sw" style="background:#9ccfd8" title="palette 12"></span><span class="sw" style="background:#c4a7e7" title="palette 13"></span><span class="sw" style="background:#ebbcba" title="palette 14"></span><span class="sw" style="background:#e0def4" title="palette 15"></span></div>
+</article>
+    
+<article class="term" style="--bg:#faf4ed;--fg:#575279;--cursor:#575279;--selbg:#dfdad9;--selfg:#575279">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Rose Pine Dawn</span>
+  </header>
+  <pre class="screen"><span style="color:#286983">~/code/seance</span> <span style="color:#907aa9">❯</span> git status
+<span style="color:#9893a5">On branch </span><span style="color:#d7827e">main</span>
+<span style="color:#9893a5">Your branch is ahead of </span><span style="color:#907aa9">origin/main</span><span style="color:#9893a5"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#b4637a">modified:   src/ghostty.ts</span>
+  <span style="color:#b4637a">modified:   src/groups.ts</span>
+
+<span style="color:#286983">~/code/seance</span> <span style="color:#907aa9">❯</span> <span style="color:#ea9d34">cat</span> src/types.ts <span style="color:#9893a5">| head -6</span>
+<span style="color:#907aa9">export</span> <span style="color:#907aa9">interface</span> <span style="color:#ea9d34">Rect</span> <span style="color:#575279">{</span>
+  <span style="color:#d7827e">x</span><span style="color:#575279">:</span> <span style="color:#907aa9">number</span><span style="color:#575279">;</span>
+  <span style="color:#d7827e">y</span><span style="color:#575279">:</span> <span style="color:#907aa9">number</span><span style="color:#575279">;</span>
+  <span style="color:#d7827e">width</span><span style="color:#575279">:</span> <span style="color:#907aa9">number</span><span style="color:#575279">;</span>
+  <span style="color:#d7827e">height</span><span style="color:#575279">:</span> <span style="color:#907aa9">number</span><span style="color:#575279">;</span>
+<span style="color:#575279">}</span>
+
+<span style="color:#286983">~/code/seance</span> <span style="color:#907aa9">❯</span> <span style="color:#9893a5"># theme: Rose Pine Dawn</span>
+<span style="color:#286983">~/code/seance</span> <span style="color:#907aa9">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#f2e9e1" title="palette 0"></span><span class="sw" style="background:#b4637a" title="palette 1"></span><span class="sw" style="background:#286983" title="palette 2"></span><span class="sw" style="background:#ea9d34" title="palette 3"></span><span class="sw" style="background:#56949f" title="palette 4"></span><span class="sw" style="background:#907aa9" title="palette 5"></span><span class="sw" style="background:#d7827e" title="palette 6"></span><span class="sw" style="background:#575279" title="palette 7"></span><span class="sw" style="background:#9893a5" title="palette 8"></span><span class="sw" style="background:#b4637a" title="palette 9"></span><span class="sw" style="background:#286983" title="palette 10"></span><span class="sw" style="background:#ea9d34" title="palette 11"></span><span class="sw" style="background:#56949f" title="palette 12"></span><span class="sw" style="background:#907aa9" title="palette 13"></span><span class="sw" style="background:#d7827e" title="palette 14"></span><span class="sw" style="background:#575279" title="palette 15"></span></div>
+</article>
+  </div>
+</section>
+<section class="pair">
+  <div class="meta">
+    <h2>Gruvbox Material</h2>
+    <p class="blurb">Warm · earthy · softened retro.</p>
+    <code class="cfg">theme = dark:Gruvbox Material Dark,light:Gruvbox Material Light</code>
+  </div>
+  <div class="duo">
+    
+<article class="term" style="--bg:#282828;--fg:#d4be98;--cursor:#d4be98;--selbg:#d4be98;--selfg:#282828">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Gruvbox Material Dark</span>
+  </header>
+  <pre class="screen"><span style="color:#a9b665">~/code/seance</span> <span style="color:#d3869b">❯</span> git status
+<span style="color:#7c6f64">On branch </span><span style="color:#89b482">main</span>
+<span style="color:#7c6f64">Your branch is ahead of </span><span style="color:#d3869b">origin/main</span><span style="color:#7c6f64"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#ea6962">modified:   src/ghostty.ts</span>
+  <span style="color:#ea6962">modified:   src/groups.ts</span>
+
+<span style="color:#a9b665">~/code/seance</span> <span style="color:#d3869b">❯</span> <span style="color:#d8a657">cat</span> src/types.ts <span style="color:#7c6f64">| head -6</span>
+<span style="color:#d3869b">export</span> <span style="color:#d3869b">interface</span> <span style="color:#d8a657">Rect</span> <span style="color:#d4be98">{</span>
+  <span style="color:#89b482">x</span><span style="color:#d4be98">:</span> <span style="color:#d3869b">number</span><span style="color:#d4be98">;</span>
+  <span style="color:#89b482">y</span><span style="color:#d4be98">:</span> <span style="color:#d3869b">number</span><span style="color:#d4be98">;</span>
+  <span style="color:#89b482">width</span><span style="color:#d4be98">:</span> <span style="color:#d3869b">number</span><span style="color:#d4be98">;</span>
+  <span style="color:#89b482">height</span><span style="color:#d4be98">:</span> <span style="color:#d3869b">number</span><span style="color:#d4be98">;</span>
+<span style="color:#d4be98">}</span>
+
+<span style="color:#a9b665">~/code/seance</span> <span style="color:#d3869b">❯</span> <span style="color:#7c6f64"># theme: Gruvbox Material Dark</span>
+<span style="color:#a9b665">~/code/seance</span> <span style="color:#d3869b">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#282828" title="palette 0"></span><span class="sw" style="background:#ea6962" title="palette 1"></span><span class="sw" style="background:#a9b665" title="palette 2"></span><span class="sw" style="background:#d8a657" title="palette 3"></span><span class="sw" style="background:#7daea3" title="palette 4"></span><span class="sw" style="background:#d3869b" title="palette 5"></span><span class="sw" style="background:#89b482" title="palette 6"></span><span class="sw" style="background:#d4be98" title="palette 7"></span><span class="sw" style="background:#7c6f64" title="palette 8"></span><span class="sw" style="background:#ea6962" title="palette 9"></span><span class="sw" style="background:#a9b665" title="palette 10"></span><span class="sw" style="background:#d8a657" title="palette 11"></span><span class="sw" style="background:#7daea3" title="palette 12"></span><span class="sw" style="background:#d3869b" title="palette 13"></span><span class="sw" style="background:#89b482" title="palette 14"></span><span class="sw" style="background:#ddc7a1" title="palette 15"></span></div>
+</article>
+    
+<article class="term" style="--bg:#fbf1c7;--fg:#654735;--cursor:#654735;--selbg:#654735;--selfg:#fbf1c7">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Gruvbox Material Light</span>
+  </header>
+  <pre class="screen"><span style="color:#6c782e">~/code/seance</span> <span style="color:#945e80">❯</span> git status
+<span style="color:#a89984">On branch </span><span style="color:#4c7a5d">main</span>
+<span style="color:#a89984">Your branch is ahead of </span><span style="color:#945e80">origin/main</span><span style="color:#a89984"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#c14a4a">modified:   src/ghostty.ts</span>
+  <span style="color:#c14a4a">modified:   src/groups.ts</span>
+
+<span style="color:#6c782e">~/code/seance</span> <span style="color:#945e80">❯</span> <span style="color:#b47109">cat</span> src/types.ts <span style="color:#a89984">| head -6</span>
+<span style="color:#945e80">export</span> <span style="color:#945e80">interface</span> <span style="color:#b47109">Rect</span> <span style="color:#654735">{</span>
+  <span style="color:#4c7a5d">x</span><span style="color:#654735">:</span> <span style="color:#945e80">number</span><span style="color:#654735">;</span>
+  <span style="color:#4c7a5d">y</span><span style="color:#654735">:</span> <span style="color:#945e80">number</span><span style="color:#654735">;</span>
+  <span style="color:#4c7a5d">width</span><span style="color:#654735">:</span> <span style="color:#945e80">number</span><span style="color:#654735">;</span>
+  <span style="color:#4c7a5d">height</span><span style="color:#654735">:</span> <span style="color:#945e80">number</span><span style="color:#654735">;</span>
+<span style="color:#654735">}</span>
+
+<span style="color:#6c782e">~/code/seance</span> <span style="color:#945e80">❯</span> <span style="color:#a89984"># theme: Gruvbox Material Light</span>
+<span style="color:#6c782e">~/code/seance</span> <span style="color:#945e80">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#fbf1c7" title="palette 0"></span><span class="sw" style="background:#c14a4a" title="palette 1"></span><span class="sw" style="background:#6c782e" title="palette 2"></span><span class="sw" style="background:#b47109" title="palette 3"></span><span class="sw" style="background:#45707a" title="palette 4"></span><span class="sw" style="background:#945e80" title="palette 5"></span><span class="sw" style="background:#4c7a5d" title="palette 6"></span><span class="sw" style="background:#654735" title="palette 7"></span><span class="sw" style="background:#a89984" title="palette 8"></span><span class="sw" style="background:#c14a4a" title="palette 9"></span><span class="sw" style="background:#6c782e" title="palette 10"></span><span class="sw" style="background:#b47109" title="palette 11"></span><span class="sw" style="background:#45707a" title="palette 12"></span><span class="sw" style="background:#945e80" title="palette 13"></span><span class="sw" style="background:#4c7a5d" title="palette 14"></span><span class="sw" style="background:#4f3829" title="palette 15"></span></div>
+</article>
+  </div>
+</section>
+<section class="pair">
+  <div class="meta">
+    <h2>Ayu</h2>
+    <p class="blurb">Warm · balanced · cream-orange.</p>
+    <code class="cfg">theme = dark:Ayu Mirage,light:Ayu Light</code>
+  </div>
+  <div class="duo">
+    
+<article class="term" style="--bg:#1f2430;--fg:#cccac2;--cursor:#ffcc66;--selbg:#409fff;--selfg:#1f2430">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Ayu Mirage</span>
+  </header>
+  <pre class="screen"><span style="color:#87d96c">~/code/seance</span> <span style="color:#dabafa">❯</span> git status
+<span style="color:#686868">On branch </span><span style="color:#90e1c6">main</span>
+<span style="color:#686868">Your branch is ahead of </span><span style="color:#dabafa">origin/main</span><span style="color:#686868"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#ed8274">modified:   src/ghostty.ts</span>
+  <span style="color:#ed8274">modified:   src/groups.ts</span>
+
+<span style="color:#87d96c">~/code/seance</span> <span style="color:#dabafa">❯</span> <span style="color:#facc6e">cat</span> src/types.ts <span style="color:#686868">| head -6</span>
+<span style="color:#dabafa">export</span> <span style="color:#dabafa">interface</span> <span style="color:#facc6e">Rect</span> <span style="color:#cccac2">{</span>
+  <span style="color:#90e1c6">x</span><span style="color:#cccac2">:</span> <span style="color:#dabafa">number</span><span style="color:#cccac2">;</span>
+  <span style="color:#90e1c6">y</span><span style="color:#cccac2">:</span> <span style="color:#dabafa">number</span><span style="color:#cccac2">;</span>
+  <span style="color:#90e1c6">width</span><span style="color:#cccac2">:</span> <span style="color:#dabafa">number</span><span style="color:#cccac2">;</span>
+  <span style="color:#90e1c6">height</span><span style="color:#cccac2">:</span> <span style="color:#dabafa">number</span><span style="color:#cccac2">;</span>
+<span style="color:#cccac2">}</span>
+
+<span style="color:#87d96c">~/code/seance</span> <span style="color:#dabafa">❯</span> <span style="color:#686868"># theme: Ayu Mirage</span>
+<span style="color:#87d96c">~/code/seance</span> <span style="color:#dabafa">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#171b24" title="palette 0"></span><span class="sw" style="background:#ed8274" title="palette 1"></span><span class="sw" style="background:#87d96c" title="palette 2"></span><span class="sw" style="background:#facc6e" title="palette 3"></span><span class="sw" style="background:#6dcbfa" title="palette 4"></span><span class="sw" style="background:#dabafa" title="palette 5"></span><span class="sw" style="background:#90e1c6" title="palette 6"></span><span class="sw" style="background:#c7c7c7" title="palette 7"></span><span class="sw" style="background:#686868" title="palette 8"></span><span class="sw" style="background:#f28779" title="palette 9"></span><span class="sw" style="background:#d5ff80" title="palette 10"></span><span class="sw" style="background:#ffd173" title="palette 11"></span><span class="sw" style="background:#73d0ff" title="palette 12"></span><span class="sw" style="background:#dfbfff" title="palette 13"></span><span class="sw" style="background:#95e6cb" title="palette 14"></span><span class="sw" style="background:#ffffff" title="palette 15"></span></div>
+</article>
+    
+<article class="term" style="--bg:#f8f9fa;--fg:#5c6166;--cursor:#ffaa33;--selbg:#035bd6;--selfg:#f8f9fa">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Ayu Light</span>
+  </header>
+  <pre class="screen"><span style="color:#6cbf43">~/code/seance</span> <span style="color:#9e75c7">❯</span> git status
+<span style="color:#686868">On branch </span><span style="color:#46ba94">main</span>
+<span style="color:#686868">Your branch is ahead of </span><span style="color:#9e75c7">origin/main</span><span style="color:#686868"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#ea6c6d">modified:   src/ghostty.ts</span>
+  <span style="color:#ea6c6d">modified:   src/groups.ts</span>
+
+<span style="color:#6cbf43">~/code/seance</span> <span style="color:#9e75c7">❯</span> <span style="color:#eca944">cat</span> src/types.ts <span style="color:#686868">| head -6</span>
+<span style="color:#9e75c7">export</span> <span style="color:#9e75c7">interface</span> <span style="color:#eca944">Rect</span> <span style="color:#5c6166">{</span>
+  <span style="color:#46ba94">x</span><span style="color:#5c6166">:</span> <span style="color:#9e75c7">number</span><span style="color:#5c6166">;</span>
+  <span style="color:#46ba94">y</span><span style="color:#5c6166">:</span> <span style="color:#9e75c7">number</span><span style="color:#5c6166">;</span>
+  <span style="color:#46ba94">width</span><span style="color:#5c6166">:</span> <span style="color:#9e75c7">number</span><span style="color:#5c6166">;</span>
+  <span style="color:#46ba94">height</span><span style="color:#5c6166">:</span> <span style="color:#9e75c7">number</span><span style="color:#5c6166">;</span>
+<span style="color:#5c6166">}</span>
+
+<span style="color:#6cbf43">~/code/seance</span> <span style="color:#9e75c7">❯</span> <span style="color:#686868"># theme: Ayu Light</span>
+<span style="color:#6cbf43">~/code/seance</span> <span style="color:#9e75c7">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#000000" title="palette 0"></span><span class="sw" style="background:#ea6c6d" title="palette 1"></span><span class="sw" style="background:#6cbf43" title="palette 2"></span><span class="sw" style="background:#eca944" title="palette 3"></span><span class="sw" style="background:#3199e1" title="palette 4"></span><span class="sw" style="background:#9e75c7" title="palette 5"></span><span class="sw" style="background:#46ba94" title="palette 6"></span><span class="sw" style="background:#bababa" title="palette 7"></span><span class="sw" style="background:#686868" title="palette 8"></span><span class="sw" style="background:#f07171" title="palette 9"></span><span class="sw" style="background:#86b300" title="palette 10"></span><span class="sw" style="background:#f2ae49" title="palette 11"></span><span class="sw" style="background:#399ee6" title="palette 12"></span><span class="sw" style="background:#a37acc" title="palette 13"></span><span class="sw" style="background:#4cbf99" title="palette 14"></span><span class="sw" style="background:#d1d1d1" title="palette 15"></span></div>
+</article>
+  </div>
+</section>
+<section class="pair">
+  <div class="meta">
+    <h2>Selenized</h2>
+    <p class="blurb">Calibrated Solarized successor · perceptually-tuned ANSI.</p>
+    <code class="cfg">theme = dark:Selenized Dark,light:Selenized Light</code>
+  </div>
+  <div class="duo">
+    
+<article class="term" style="--bg:#103c48;--fg:#adbcbc;--cursor:#adbcbc;--selbg:#184956;--selfg:#53d6c7">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Selenized Dark</span>
+  </header>
+  <pre class="screen"><span style="color:#75b938">~/code/seance</span> <span style="color:#f275be">❯</span> git status
+<span style="color:#72898f">On branch </span><span style="color:#41c7b9">main</span>
+<span style="color:#72898f">Your branch is ahead of </span><span style="color:#f275be">origin/main</span><span style="color:#72898f"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#fa5750">modified:   src/ghostty.ts</span>
+  <span style="color:#fa5750">modified:   src/groups.ts</span>
+
+<span style="color:#75b938">~/code/seance</span> <span style="color:#f275be">❯</span> <span style="color:#dbb32d">cat</span> src/types.ts <span style="color:#72898f">| head -6</span>
+<span style="color:#f275be">export</span> <span style="color:#f275be">interface</span> <span style="color:#dbb32d">Rect</span> <span style="color:#adbcbc">{</span>
+  <span style="color:#41c7b9">x</span><span style="color:#adbcbc">:</span> <span style="color:#f275be">number</span><span style="color:#adbcbc">;</span>
+  <span style="color:#41c7b9">y</span><span style="color:#adbcbc">:</span> <span style="color:#f275be">number</span><span style="color:#adbcbc">;</span>
+  <span style="color:#41c7b9">width</span><span style="color:#adbcbc">:</span> <span style="color:#f275be">number</span><span style="color:#adbcbc">;</span>
+  <span style="color:#41c7b9">height</span><span style="color:#adbcbc">:</span> <span style="color:#f275be">number</span><span style="color:#adbcbc">;</span>
+<span style="color:#adbcbc">}</span>
+
+<span style="color:#75b938">~/code/seance</span> <span style="color:#f275be">❯</span> <span style="color:#72898f"># theme: Selenized Dark</span>
+<span style="color:#75b938">~/code/seance</span> <span style="color:#f275be">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#184956" title="palette 0"></span><span class="sw" style="background:#fa5750" title="palette 1"></span><span class="sw" style="background:#75b938" title="palette 2"></span><span class="sw" style="background:#dbb32d" title="palette 3"></span><span class="sw" style="background:#4695f7" title="palette 4"></span><span class="sw" style="background:#f275be" title="palette 5"></span><span class="sw" style="background:#41c7b9" title="palette 6"></span><span class="sw" style="background:#adbcbc" title="palette 7"></span><span class="sw" style="background:#72898f" title="palette 8"></span><span class="sw" style="background:#ff665c" title="palette 9"></span><span class="sw" style="background:#84c747" title="palette 10"></span><span class="sw" style="background:#ebc13d" title="palette 11"></span><span class="sw" style="background:#58a3ff" title="palette 12"></span><span class="sw" style="background:#ff84cd" title="palette 13"></span><span class="sw" style="background:#53d6c7" title="palette 14"></span><span class="sw" style="background:#cad8d9" title="palette 15"></span></div>
+</article>
+    
+<article class="term" style="--bg:#fbf3db;--fg:#53676d;--cursor:#53676d;--selbg:#ece3cc;--selfg:#00978a">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Selenized Light</span>
+  </header>
+  <pre class="screen"><span style="color:#489100">~/code/seance</span> <span style="color:#ca4898">❯</span> git status
+<span style="color:#909995">On branch </span><span style="color:#009c8f">main</span>
+<span style="color:#909995">Your branch is ahead of </span><span style="color:#ca4898">origin/main</span><span style="color:#909995"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#d2212d">modified:   src/ghostty.ts</span>
+  <span style="color:#d2212d">modified:   src/groups.ts</span>
+
+<span style="color:#489100">~/code/seance</span> <span style="color:#ca4898">❯</span> <span style="color:#ad8900">cat</span> src/types.ts <span style="color:#909995">| head -6</span>
+<span style="color:#ca4898">export</span> <span style="color:#ca4898">interface</span> <span style="color:#ad8900">Rect</span> <span style="color:#53676d">{</span>
+  <span style="color:#009c8f">x</span><span style="color:#53676d">:</span> <span style="color:#ca4898">number</span><span style="color:#53676d">;</span>
+  <span style="color:#009c8f">y</span><span style="color:#53676d">:</span> <span style="color:#ca4898">number</span><span style="color:#53676d">;</span>
+  <span style="color:#009c8f">width</span><span style="color:#53676d">:</span> <span style="color:#ca4898">number</span><span style="color:#53676d">;</span>
+  <span style="color:#009c8f">height</span><span style="color:#53676d">:</span> <span style="color:#ca4898">number</span><span style="color:#53676d">;</span>
+<span style="color:#53676d">}</span>
+
+<span style="color:#489100">~/code/seance</span> <span style="color:#ca4898">❯</span> <span style="color:#909995"># theme: Selenized Light</span>
+<span style="color:#489100">~/code/seance</span> <span style="color:#ca4898">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#ece3cc" title="palette 0"></span><span class="sw" style="background:#d2212d" title="palette 1"></span><span class="sw" style="background:#489100" title="palette 2"></span><span class="sw" style="background:#ad8900" title="palette 3"></span><span class="sw" style="background:#0072d4" title="palette 4"></span><span class="sw" style="background:#ca4898" title="palette 5"></span><span class="sw" style="background:#009c8f" title="palette 6"></span><span class="sw" style="background:#53676d" title="palette 7"></span><span class="sw" style="background:#909995" title="palette 8"></span><span class="sw" style="background:#cc1729" title="palette 9"></span><span class="sw" style="background:#428b00" title="palette 10"></span><span class="sw" style="background:#a78300" title="palette 11"></span><span class="sw" style="background:#006dce" title="palette 12"></span><span class="sw" style="background:#c44392" title="palette 13"></span><span class="sw" style="background:#00978a" title="palette 14"></span><span class="sw" style="background:#3a4d53" title="palette 15"></span></div>
+</article>
+  </div>
+</section>
+<section class="pair">
+  <div class="meta">
+    <h2>Modus</h2>
+    <p class="blurb">Max contrast · WCAG AAA · best raw legibility.</p>
+    <code class="cfg">theme = dark:Modus Vivendi,light:Modus Operandi</code>
+  </div>
+  <div class="duo">
+    
+<article class="term" style="--bg:#000000;--fg:#ffffff;--cursor:#ffffff;--selbg:#5a5a5a;--selfg:#ffffff">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Modus Vivendi</span>
+  </header>
+  <pre class="screen"><span style="color:#44bc44">~/code/seance</span> <span style="color:#feacd0">❯</span> git status
+<span style="color:#595959">On branch </span><span style="color:#00d3d0">main</span>
+<span style="color:#595959">Your branch is ahead of </span><span style="color:#feacd0">origin/main</span><span style="color:#595959"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#ff5f59">modified:   src/ghostty.ts</span>
+  <span style="color:#ff5f59">modified:   src/groups.ts</span>
+
+<span style="color:#44bc44">~/code/seance</span> <span style="color:#feacd0">❯</span> <span style="color:#d0bc00">cat</span> src/types.ts <span style="color:#595959">| head -6</span>
+<span style="color:#feacd0">export</span> <span style="color:#feacd0">interface</span> <span style="color:#d0bc00">Rect</span> <span style="color:#ffffff">{</span>
+  <span style="color:#00d3d0">x</span><span style="color:#ffffff">:</span> <span style="color:#feacd0">number</span><span style="color:#ffffff">;</span>
+  <span style="color:#00d3d0">y</span><span style="color:#ffffff">:</span> <span style="color:#feacd0">number</span><span style="color:#ffffff">;</span>
+  <span style="color:#00d3d0">width</span><span style="color:#ffffff">:</span> <span style="color:#feacd0">number</span><span style="color:#ffffff">;</span>
+  <span style="color:#00d3d0">height</span><span style="color:#ffffff">:</span> <span style="color:#feacd0">number</span><span style="color:#ffffff">;</span>
+<span style="color:#ffffff">}</span>
+
+<span style="color:#44bc44">~/code/seance</span> <span style="color:#feacd0">❯</span> <span style="color:#595959"># theme: Modus Vivendi</span>
+<span style="color:#44bc44">~/code/seance</span> <span style="color:#feacd0">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#000000" title="palette 0"></span><span class="sw" style="background:#ff5f59" title="palette 1"></span><span class="sw" style="background:#44bc44" title="palette 2"></span><span class="sw" style="background:#d0bc00" title="palette 3"></span><span class="sw" style="background:#2fafff" title="palette 4"></span><span class="sw" style="background:#feacd0" title="palette 5"></span><span class="sw" style="background:#00d3d0" title="palette 6"></span><span class="sw" style="background:#a6a6a6" title="palette 7"></span><span class="sw" style="background:#595959" title="palette 8"></span><span class="sw" style="background:#ff7f9f" title="palette 9"></span><span class="sw" style="background:#00c06f" title="palette 10"></span><span class="sw" style="background:#fec43f" title="palette 11"></span><span class="sw" style="background:#79a8ff" title="palette 12"></span><span class="sw" style="background:#b6a0ff" title="palette 13"></span><span class="sw" style="background:#6ae4b9" title="palette 14"></span><span class="sw" style="background:#ffffff" title="palette 15"></span></div>
+</article>
+    
+<article class="term" style="--bg:#ffffff;--fg:#000000;--cursor:#000000;--selbg:#bdbdbd;--selfg:#000000">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Modus Operandi</span>
+  </header>
+  <pre class="screen"><span style="color:#006800">~/code/seance</span> <span style="color:#721045">❯</span> git status
+<span style="color:#595959">On branch </span><span style="color:#005e8b">main</span>
+<span style="color:#595959">Your branch is ahead of </span><span style="color:#721045">origin/main</span><span style="color:#595959"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#a60000">modified:   src/ghostty.ts</span>
+  <span style="color:#a60000">modified:   src/groups.ts</span>
+
+<span style="color:#006800">~/code/seance</span> <span style="color:#721045">❯</span> <span style="color:#6f5500">cat</span> src/types.ts <span style="color:#595959">| head -6</span>
+<span style="color:#721045">export</span> <span style="color:#721045">interface</span> <span style="color:#6f5500">Rect</span> <span style="color:#000000">{</span>
+  <span style="color:#005e8b">x</span><span style="color:#000000">:</span> <span style="color:#721045">number</span><span style="color:#000000">;</span>
+  <span style="color:#005e8b">y</span><span style="color:#000000">:</span> <span style="color:#721045">number</span><span style="color:#000000">;</span>
+  <span style="color:#005e8b">width</span><span style="color:#000000">:</span> <span style="color:#721045">number</span><span style="color:#000000">;</span>
+  <span style="color:#005e8b">height</span><span style="color:#000000">:</span> <span style="color:#721045">number</span><span style="color:#000000">;</span>
+<span style="color:#000000">}</span>
+
+<span style="color:#006800">~/code/seance</span> <span style="color:#721045">❯</span> <span style="color:#595959"># theme: Modus Operandi</span>
+<span style="color:#006800">~/code/seance</span> <span style="color:#721045">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#000000" title="palette 0"></span><span class="sw" style="background:#a60000" title="palette 1"></span><span class="sw" style="background:#006800" title="palette 2"></span><span class="sw" style="background:#6f5500" title="palette 3"></span><span class="sw" style="background:#0031a9" title="palette 4"></span><span class="sw" style="background:#721045" title="palette 5"></span><span class="sw" style="background:#005e8b" title="palette 6"></span><span class="sw" style="background:#a6a6a6" title="palette 7"></span><span class="sw" style="background:#595959" title="palette 8"></span><span class="sw" style="background:#972500" title="palette 9"></span><span class="sw" style="background:#00663f" title="palette 10"></span><span class="sw" style="background:#884900" title="palette 11"></span><span class="sw" style="background:#3548cf" title="palette 12"></span><span class="sw" style="background:#531ab6" title="palette 13"></span><span class="sw" style="background:#005f5f" title="palette 14"></span><span class="sw" style="background:#595959" title="palette 15"></span></div>
+</article>
+  </div>
+</section>
+<section class="pair">
+  <div class="meta">
+    <h2>Night Owl</h2>
+    <p class="blurb">Deep navy + neon syntax · web-dev iconic.</p>
+    <code class="cfg">theme = dark:Night Owl,light:Night Owlish Light</code>
+  </div>
+  <div class="duo">
+    
+<article class="term" style="--bg:#011627;--fg:#d6deeb;--cursor:#7e57c2;--selbg:#5f7e97;--selfg:#dfe5ee">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Night Owl</span>
+  </header>
+  <pre class="screen"><span style="color:#22da6e">~/code/seance</span> <span style="color:#c792ea">❯</span> git status
+<span style="color:#575656">On branch </span><span style="color:#21c7a8">main</span>
+<span style="color:#575656">Your branch is ahead of </span><span style="color:#c792ea">origin/main</span><span style="color:#575656"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#ef5350">modified:   src/ghostty.ts</span>
+  <span style="color:#ef5350">modified:   src/groups.ts</span>
+
+<span style="color:#22da6e">~/code/seance</span> <span style="color:#c792ea">❯</span> <span style="color:#addb67">cat</span> src/types.ts <span style="color:#575656">| head -6</span>
+<span style="color:#c792ea">export</span> <span style="color:#c792ea">interface</span> <span style="color:#addb67">Rect</span> <span style="color:#d6deeb">{</span>
+  <span style="color:#21c7a8">x</span><span style="color:#d6deeb">:</span> <span style="color:#c792ea">number</span><span style="color:#d6deeb">;</span>
+  <span style="color:#21c7a8">y</span><span style="color:#d6deeb">:</span> <span style="color:#c792ea">number</span><span style="color:#d6deeb">;</span>
+  <span style="color:#21c7a8">width</span><span style="color:#d6deeb">:</span> <span style="color:#c792ea">number</span><span style="color:#d6deeb">;</span>
+  <span style="color:#21c7a8">height</span><span style="color:#d6deeb">:</span> <span style="color:#c792ea">number</span><span style="color:#d6deeb">;</span>
+<span style="color:#d6deeb">}</span>
+
+<span style="color:#22da6e">~/code/seance</span> <span style="color:#c792ea">❯</span> <span style="color:#575656"># theme: Night Owl</span>
+<span style="color:#22da6e">~/code/seance</span> <span style="color:#c792ea">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#011627" title="palette 0"></span><span class="sw" style="background:#ef5350" title="palette 1"></span><span class="sw" style="background:#22da6e" title="palette 2"></span><span class="sw" style="background:#addb67" title="palette 3"></span><span class="sw" style="background:#82aaff" title="palette 4"></span><span class="sw" style="background:#c792ea" title="palette 5"></span><span class="sw" style="background:#21c7a8" title="palette 6"></span><span class="sw" style="background:#ffffff" title="palette 7"></span><span class="sw" style="background:#575656" title="palette 8"></span><span class="sw" style="background:#ef5350" title="palette 9"></span><span class="sw" style="background:#22da6e" title="palette 10"></span><span class="sw" style="background:#ffeb95" title="palette 11"></span><span class="sw" style="background:#82aaff" title="palette 12"></span><span class="sw" style="background:#c792ea" title="palette 13"></span><span class="sw" style="background:#7fdbca" title="palette 14"></span><span class="sw" style="background:#ffffff" title="palette 15"></span></div>
+</article>
+    
+<article class="term" style="--bg:#ffffff;--fg:#403f53;--cursor:#403f53;--selbg:#f2f2f2;--selfg:#403f53">
+  <header class="tbar">
+    <span class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span>
+    <span class="ttitle">Night Owlish Light</span>
+  </header>
+  <pre class="screen"><span style="color:#2aa298">~/code/seance</span> <span style="color:#403f53">❯</span> git status
+<span style="color:#7a8181">On branch </span><span style="color:#08916a">main</span>
+<span style="color:#7a8181">Your branch is ahead of </span><span style="color:#403f53">origin/main</span><span style="color:#7a8181"> by 1 commit.</span>
+
+Changes not staged for commit:
+  <span style="color:#d3423e">modified:   src/ghostty.ts</span>
+  <span style="color:#d3423e">modified:   src/groups.ts</span>
+
+<span style="color:#2aa298">~/code/seance</span> <span style="color:#403f53">❯</span> <span style="color:#daaa01">cat</span> src/types.ts <span style="color:#7a8181">| head -6</span>
+<span style="color:#403f53">export</span> <span style="color:#403f53">interface</span> <span style="color:#daaa01">Rect</span> <span style="color:#403f53">{</span>
+  <span style="color:#08916a">x</span><span style="color:#403f53">:</span> <span style="color:#403f53">number</span><span style="color:#403f53">;</span>
+  <span style="color:#08916a">y</span><span style="color:#403f53">:</span> <span style="color:#403f53">number</span><span style="color:#403f53">;</span>
+  <span style="color:#08916a">width</span><span style="color:#403f53">:</span> <span style="color:#403f53">number</span><span style="color:#403f53">;</span>
+  <span style="color:#08916a">height</span><span style="color:#403f53">:</span> <span style="color:#403f53">number</span><span style="color:#403f53">;</span>
+<span style="color:#403f53">}</span>
+
+<span style="color:#2aa298">~/code/seance</span> <span style="color:#403f53">❯</span> <span style="color:#7a8181"># theme: Night Owlish Light</span>
+<span style="color:#2aa298">~/code/seance</span> <span style="color:#403f53">❯</span> <span class="cur"> </span></pre>
+  <div class="strip" aria-label="ANSI palette 0-15"><span class="sw" style="background:#011627" title="palette 0"></span><span class="sw" style="background:#d3423e" title="palette 1"></span><span class="sw" style="background:#2aa298" title="palette 2"></span><span class="sw" style="background:#daaa01" title="palette 3"></span><span class="sw" style="background:#4876d6" title="palette 4"></span><span class="sw" style="background:#403f53" title="palette 5"></span><span class="sw" style="background:#08916a" title="palette 6"></span><span class="sw" style="background:#7a8181" title="palette 7"></span><span class="sw" style="background:#7a8181" title="palette 8"></span><span class="sw" style="background:#f76e6e" title="palette 9"></span><span class="sw" style="background:#49d0c5" title="palette 10"></span><span class="sw" style="background:#dac26b" title="palette 11"></span><span class="sw" style="background:#5ca7e4" title="palette 12"></span><span class="sw" style="background:#697098" title="palette 13"></span><span class="sw" style="background:#00c990" title="palette 14"></span><span class="sw" style="background:#989fb1" title="palette 15"></span></div>
+</article>
+  </div>
+</section>
+
+  <footer class="page">
+    Palettes sourced from
+    <a href="https://github.com/mbadolato/iTerm2-Color-Schemes/tree/master/ghostty">iterm2-color-schemes/ghostty</a>.
+    Apply any of these by adding the <code>theme = …</code> line shown to
+    <code>~/.config/ghostty/config.ghostty</code> and reloading
+    (<code>cmd+shift+,</code> on macOS, <code>ctrl+shift+,</code> on Linux).
+  </footer>
+</div>
+</body>
+</html>

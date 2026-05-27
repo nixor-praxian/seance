@@ -42,6 +42,23 @@ export function nextFreeSlot(g: Group): number {
   for (let i = 1; ; i++) if (!used.has(i)) return i;
 }
 
+export function setActiveGroup(state: SeanceState, name: string): void {
+  state.activeGroup = name;
+}
+
+/**
+ * Resolve which group to operate on when the user didn't name one:
+ * 1) the explicitly tracked activeGroup if it still exists
+ * 2) the only group if there's exactly one
+ * 3) undefined — caller must error
+ */
+export function resolveActiveGroup(state: SeanceState): string | undefined {
+  if (state.activeGroup && state.groups[state.activeGroup]) return state.activeGroup;
+  const names = Object.keys(state.groups);
+  if (names.length === 1) return names[0];
+  return undefined;
+}
+
 export function removeWindow(state: SeanceState, name: string, windowId: string): Group {
   const g = getGroup(state, name);
   const before = g.windows.length;

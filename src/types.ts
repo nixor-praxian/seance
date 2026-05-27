@@ -58,4 +58,6 @@ export interface SeanceState {
   groups: Record<string, Group>;
   projects: Record<string, ProjectConfig>;
   themes: Record<string, ThemePair>;
+  /** Last group that was used / arranged / themed. Drives default-group lookups. */
+  activeGroup?: string;
 }

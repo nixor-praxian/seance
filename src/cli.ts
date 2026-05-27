@@ -12,6 +12,8 @@ import {
   getGroup,
   listGroups,
   nextFreeSlot,
+  resolveActiveGroup,
+  setActiveGroup,
   setGroupLayout,
   setGroupTheme,
 } from "./groups.js";
@@ -25,7 +27,7 @@ import {
   resolveTheme,
   themeFilePath,
 } from "./themes.js";
-import type { LayoutSpec, Rect, WindowRef } from "./types.js";
+import type { LayoutSpec, Rect, SeanceState, WindowRef } from "./types.js";
 
 export async function run(argv: string[]): Promise<void> {
   const program = new Command();
@@ -73,18 +75,11 @@ export async function run(argv: string[]): Promise<void> {
       if (!state.groups[name]) createGroup(state, name);
       const slot = opts.slot ?? nextFreeSlot(state.groups[name]!);
       const cwd = process.cwd();
-      const keepTitle = !ghostty.looksLikeShellDefaultTitle(win.title, cwd);
       const { title: _drop, ...winNoTitle } = win;
-      const entry: WindowRef = {
-        ...winNoTitle,
-        ...(keepTitle && win.title ? { title: win.title } : {}),
-        ttyPath,
-        slot,
-        cwd,
-      };
+      const entry: WindowRef = { ...winNoTitle, ttyPath, slot, cwd };
       addWindow(state, name, entry);
       await saveState(state);
-      console.log(`added window ${win.windowId} to "${name}" at slot ${slot} (tty ${ttyPath}, cwd ${cwd})`);
+      console.log(`added window to "${name}" at slot ${slot} (tty ${ttyPath}, cwd ${cwd})`);
     });
 
   group
@@ -110,16 +105,24 @@ export async function run(argv: string[]): Promise<void> {
     .action(async (name: string) => {
       const state = await loadState();
       const g = getGroup(state, name);
-      console.log(`group: ${g.name}`);
-      console.log(`theme: ${g.themeName ?? "-"}`);
+      console.log(`group:       ${g.name}`);
+      console.log(`theme:       ${g.themeName ?? "-"}`);
       console.log(`last layout: ${g.lastLayout ? formatLayout(g.lastLayout) : "-"}`);
-      console.log(`windows (${g.windows.length}):`);
+      console.log(`windows:     ${g.windows.length}`);
+      if (g.windows.length === 0) return;
       const sorted = [...g.windows].sort((a, b) => (a.slot ?? 99) - (b.slot ?? 99));
-      for (const w of sorted) {
-        const slot = w.slot !== undefined ? `slot ${w.slot}` : "(no slot)";
-        const tty = w.ttyPath ?? "(no tty)";
-        console.log(`  ${slot}\t${w.windowId}\t${tty}\t${w.title ?? ""}`);
-      }
+      const rows = sorted.map((w) => ({
+        slot: w.slot !== undefined ? String(w.slot) : "-",
+        tty: w.ttyPath ? w.ttyPath.replace(/^\/dev\//, "") : "-",
+        cwd: w.cwd ?? "-",
+      }));
+      const w = (k: "slot" | "tty" | "cwd", header: string) =>
+        Math.max(header.length, ...rows.map((r) => r[k].length));
+      const ws = [w("slot", "SLOT"), w("tty", "TTY"), w("cwd", "CWD")];
+      const fmt = (cells: string[]) =>
+        cells.map((s, i) => s.padEnd(ws[i]!)).join("  ").trimEnd();
+      console.log("  " + fmt(["SLOT", "TTY", "CWD"]));
+      for (const r of rows) console.log("  " + fmt([r.slot, r.tty, r.cwd]));
     });
 
   group
@@ -134,19 +137,40 @@ export async function run(argv: string[]): Promise<void> {
 
   // ── grid ─────────────────────────────────────────────────────────
   program
-    .command("grid <name> [spec]")
-    .description('Arrange a group on screen. spec: "2x2", or use --cols for custom widths.')
+    .command("grid [arg1] [arg2]")
+    .description(
+      'Arrange a group on screen. Forms: "grid 2x2" (active group), "grid <name> 2x2", or "grid <name>" (re-apply last layout).',
+    )
     .option("--cols <weights>", "comma-separated column weights (e.g. 1,3)")
     .option("--rows <n>", "rows when using --cols", (v) => Number(v))
     .option("--gap <px>", "gap between tiles in px", (v) => Number(v), 0)
     .option("--padding <px>", "outer padding in px", (v) => Number(v), 0)
     .action(
       async (
-        name: string,
-        spec: string | undefined,
+        arg1: string | undefined,
+        arg2: string | undefined,
         opts: { cols?: string; rows?: number; gap: number; padding: number },
       ) => {
         const state = await loadState();
+        const looksLikeSpec = (s: string | undefined) => !!s && /^\d+\s*[xX]\s*\d+$/.test(s);
+
+        let name: string | undefined;
+        let spec: string | undefined;
+        if (arg2 !== undefined) {
+          name = arg1;
+          spec = arg2;
+        } else if (looksLikeSpec(arg1)) {
+          spec = arg1;
+          name = resolveActiveGroup(state);
+        } else {
+          name = arg1 ?? resolveActiveGroup(state);
+        }
+
+        if (!name) {
+          throw new Error(
+            'no active group. Pass one: "seance grid <name> 2x2" — or set one up with "seance init"',
+          );
+        }
         const g = getGroup(state, name);
 
         let layout: LayoutSpec;
@@ -157,10 +181,10 @@ export async function run(argv: string[]): Promise<void> {
           };
         } else if (spec) {
           layout = parseGrid(spec);
+        } else if (g.lastLayout) {
+          layout = g.lastLayout;
         } else {
-          console.error("provide a spec (e.g. 2x2) or --cols");
-          process.exitCode = 1;
-          return;
+          throw new Error('provide a spec (e.g. "2x2") or --cols');
         }
 
         const screen = await ghostty.mainScreenFrame();
@@ -169,15 +193,14 @@ export async function run(argv: string[]): Promise<void> {
         await ghostty.activate();
         const plans = buildSlotPlans(g.windows, rects);
         if (plans.length === 0) {
-          console.error(
-            `no slotted+TTY-tagged windows in "${name}". Re-add windows with "group add ${name}" (optionally --slot N) and try again.`,
+          throw new Error(
+            `no slotted+TTY-tagged windows in "${name}". Re-add with "seance group add ${name} --slot N" from each window.`,
           );
-          process.exitCode = 1;
-          return;
         }
         await ghostty.setWindowBounds(plans);
 
         setGroupLayout(state, name, layout);
+        setActiveGroup(state, name);
         await saveState(state);
         console.log(`arranged ${plans.length} window(s) in "${name}"`);
       },
@@ -185,12 +208,18 @@ export async function run(argv: string[]): Promise<void> {
 
   // ── summon ───────────────────────────────────────────────────────
   program
-    .command("summon <name>")
-    .description("Focus a group and re-apply its last layout.")
-    .action(async (name: string) => {
+    .command("summon [name]")
+    .description("Focus a group and re-apply its last layout. Defaults to the active group.")
+    .action(async (nameArg: string | undefined) => {
       const state = await loadState();
+      const name = nameArg ?? resolveActiveGroup(state);
+      if (!name) {
+        throw new Error('no active group. Pass one: "seance summon <name>"');
+      }
       const g = getGroup(state, name);
       await ghostty.activate();
+      setActiveGroup(state, name);
+      await saveState(state);
       if (!g.lastLayout) {
         console.log(`focused Ghostty (no layout stored for "${name}" yet)`);
         return;
@@ -210,13 +239,17 @@ export async function run(argv: string[]): Promise<void> {
   const theme = program.command("theme").description("Manage themes for groups.");
 
   theme
-    .command("set <name> <themeName>")
-    .description("Assign a Ghostty theme to a group.")
-    .action(async (name: string, themeName: string) => {
+    .command("set <a> [rest...]")
+    .description(
+      "Assign a theme pair. Forms: 'theme set <pair>' (active group) or 'theme set <group> <pair>'. Multi-word pair names don't need quoting.",
+    )
+    .action(async (a: string, rest: string[]) => {
       const state = await loadState();
-      setGroupTheme(state, name, themeName);
+      const { group, pair } = resolveSetThemeArgs(state, a, rest);
+      setGroupTheme(state, group, pair);
+      setActiveGroup(state, group);
       await saveState(state);
-      console.log(`set theme of "${name}" to ${themeName}`);
+      console.log(`set theme of "${group}" to ${pair}`);
     });
 
   theme
@@ -228,50 +261,17 @@ export async function run(argv: string[]): Promise<void> {
     });
 
   theme
-    .command("apply <group>")
-    .description("Paint the group's theme into each of its windows via OSC palette.")
-    .action(async (name: string) => {
+    .command("apply [group]")
+    .description("Paint the group's theme into its windows via OSC. Defaults to the active group.")
+    .action(async (groupArg: string | undefined) => {
       const state = await loadState();
-      const g = getGroup(state, name);
-      if (!g.themeName) {
-        console.error(`group "${name}" has no theme set — try "seance theme set ${name} <pair>"`);
-        process.exitCode = 1;
-        return;
+      const name = groupArg ?? resolveActiveGroup(state);
+      if (!name) {
+        throw new Error('no active group. Pass one: "seance theme apply <group>"');
       }
-      const pair = getTheme(state, g.themeName);
-      if (!pair) {
-        console.error(`unknown theme pair "${g.themeName}". See "seance theme list-pairs".`);
-        process.exitCode = 1;
-        return;
-      }
-      const appearance = await ghostty.currentAppearance();
-      const themeName = resolveTheme(pair, appearance);
-      let palette;
-      try {
-        palette = await parseThemeFile(themeFilePath(themeName));
-      } catch (err) {
-        console.error(`failed to load Ghostty theme "${themeName}": ${(err as Error).message}`);
-        process.exitCode = 1;
-        return;
-      }
-      const windows = g.windows.filter((w) => w.ttyPath);
-      if (windows.length === 0) {
-        console.error(`no TTY-tagged windows in "${name}"`);
-        process.exitCode = 1;
-        return;
-      }
-      let applied = 0;
-      for (const w of windows) {
-        try {
-          await ghostty.applyPaletteToTty(w.ttyPath!, palette);
-          applied++;
-        } catch (err) {
-          console.error(`  ${w.ttyPath}: ${(err as Error).message}`);
-        }
-      }
-      console.log(
-        `applied "${g.themeName}" → ${themeName} (${appearance}) to ${applied}/${windows.length} window(s) in "${name}"`,
-      );
+      await paintGroupTheme(state, name);
+      setActiveGroup(state, name);
+      await saveState(state);
     });
 
   theme
@@ -475,37 +475,47 @@ export async function run(argv: string[]): Promise<void> {
           }
           printWindowsTable(ax, probeByAx, ttyToGroupSlot);
 
-          const pickRaw = (
-            await ask(
-              rl,
-              `\nPick windows for "${name}" in slot order — IDX numbers separated by spaces, or "all": `,
-            )
-          ).trim();
-          let picks: number[];
-          if (pickRaw === "all") {
-            picks = ax.map((w) => w.axIndex);
-          } else {
-            picks = pickRaw
-              .split(/\s+/)
-              .map((s) => Number(s))
-              .filter((n) => Number.isInteger(n));
-          }
-          picks = picks.filter((idx) => probeByAx.has(idx));
-          if (picks.length === 0) {
-            console.error("init: no valid windows picked (need probe data — try `seance windows --probe`)");
-            process.exitCode = 1;
-            return;
+          let picks: number[] = [];
+          while (picks.length === 0) {
+            const pickRaw = (
+              await ask(
+                rl,
+                `\nPick windows for "${name}" in slot order — IDX numbers separated by spaces or commas, or "all" (empty to cancel): `,
+              )
+            ).trim();
+            if (!pickRaw) {
+              console.log("init: cancelled");
+              return;
+            }
+            let parsed: number[];
+            if (pickRaw === "all") {
+              parsed = ax.filter((w) => probeByAx.has(w.axIndex)).map((w) => w.axIndex);
+            } else {
+              parsed = pickRaw
+                .split(/[\s,]+/)
+                .map((s) => Number(s))
+                .filter((n) => Number.isInteger(n));
+            }
+            const valid = parsed.filter((idx) => probeByAx.has(idx));
+            const dropped = parsed.filter((idx) => !probeByAx.has(idx));
+            if (dropped.length > 0) {
+              console.log(
+                `  IDXs ${dropped.join(", ")} couldn't be probed (Claude Code, ssh, or a shell loop` +
+                  ` is reasserting the title faster than we can). Two ways to add them:`,
+              );
+              console.log(`    a) from any local Ghostty window:  seance windows --probe --assign`);
+              console.log(`    b) from a LOCAL shell in the window (only works for non-ssh windows):`);
+              console.log(`         seance group add ${name} --slot N`);
+            }
+            picks = valid;
           }
 
           for (let i = 0; i < picks.length; i++) {
             const axIdx = picks[i]!;
             const p = probeByAx.get(axIdx)!;
-            const axw = ax.find((w) => w.axIndex === axIdx)!;
             const slot = i + 1;
-            const keepTitle = !ghostty.looksLikeShellDefaultTitle(axw.title, p.cwd);
             addWindow(state, name, {
               windowId: p.ghosttyId,
-              ...(keepTitle && axw.title ? { title: axw.title } : {}),
               ttyPath: p.ttyPath,
               slot,
               ...(p.cwd ? { cwd: p.cwd } : {}),
@@ -614,44 +624,85 @@ export async function run(argv: string[]): Promise<void> {
       const probeByAx = new Map(probeRows.map((r) => [r.axIndex, r]));
 
       const state = await loadState();
-      const ttyToGroupSlot = new Map<string, string>();
-      for (const g of Object.values(state.groups)) {
-        for (const w of g.windows) {
-          if (w.ttyPath && w.slot !== undefined) {
-            ttyToGroupSlot.set(w.ttyPath, `${g.name}:${w.slot}`);
+      const buildTtyToGroupSlot = (): Map<string, string> => {
+        const m = new Map<string, string>();
+        for (const g of Object.values(state.groups)) {
+          for (const w of g.windows) {
+            if (w.ttyPath && w.slot !== undefined) m.set(w.ttyPath, `${g.name}:${w.slot}`);
           }
         }
+        return m;
+      };
+
+      if (!opts.assign) {
+        printWindowsTable(ax, probeByAx, buildTtyToGroupSlot());
+        return;
       }
 
-      printWindowsTable(ax, probeByAx, ttyToGroupSlot);
-
-      if (opts.assign) {
-        const assignments = await promptAssignments();
-        if (assignments.length === 0) {
-          console.log("no assignments — nothing changed");
-          return;
-        }
-        for (const a of assignments) {
-          const p = probeByAx.get(a.axIndex);
-          const axw = ax.find((w) => w.axIndex === a.axIndex);
-          if (!p || !axw) {
-            console.error(`  skipped idx ${a.axIndex}: no probe data`);
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      let dirty = false;
+      try {
+        while (true) {
+          printWindowsTable(ax, probeByAx, buildTtyToGroupSlot());
+          console.log("\nAssign: <idx> <group> [slot]   (blank line to finish)");
+          const line = (await ask(rl, "> ")).trim();
+          if (!line) break;
+          const parts = line.split(/\s+/);
+          const idx = Number(parts[0]);
+          const group = parts[1];
+          const slot = parts[2] !== undefined ? Number(parts[2]) : undefined;
+          if (!Number.isInteger(idx) || idx < 1 || !group) {
+            console.log("  ! usage: <idx> <group> [slot]");
             continue;
           }
-          if (!state.groups[a.group]) createGroup(state, a.group);
-          const slot = a.slot ?? nextFreeSlot(state.groups[a.group]!);
-          const keepTitle = !ghostty.looksLikeShellDefaultTitle(axw.title, p.cwd);
-          addWindow(state, a.group, {
+          if (slot !== undefined && (!Number.isInteger(slot) || slot < 1)) {
+            console.log("  ! slot must be a positive integer");
+            continue;
+          }
+          const p = probeByAx.get(idx);
+          if (!p) {
+            console.log(`  ! idx ${idx} has no probe data — skipped`);
+            continue;
+          }
+          if (!state.groups[group]) createGroup(state, group);
+          const finalSlot = slot ?? nextFreeSlot(state.groups[group]!);
+          addWindow(state, group, {
             windowId: p.ghosttyId,
-            ...(keepTitle && axw.title ? { title: axw.title } : {}),
             ttyPath: p.ttyPath,
-            slot,
+            slot: finalSlot,
             ...(p.cwd ? { cwd: p.cwd } : {}),
           });
-          console.log(`  assigned idx ${a.axIndex} → ${a.group}:${slot}${p.cwd ? ` (${p.cwd})` : ""}`);
+          dirty = true;
+          console.log(`  ✓ idx ${idx} → ${group}:${finalSlot}${p.cwd ? `  (${p.cwd})` : ""}`);
         }
-        await saveState(state);
+      } finally {
+        rl.close();
       }
+      if (dirty) {
+        await saveState(state);
+        console.log("\nstate saved.");
+      } else {
+        console.log("no assignments — nothing changed");
+      }
+    });
+
+  // ── use (shortcut) ───────────────────────────────────────────────
+  program
+    .command("use <pair...>")
+    .description(
+      'Shortcut: assign a theme pair to the active group AND paint it. E.g. "seance use Rose Pine".',
+    )
+    .action(async (pairArgs: string[]) => {
+      const state = await loadState();
+      const active = resolveActiveGroup(state);
+      if (!active) {
+        throw new Error('no active group. Run "seance init <name>" first.');
+      }
+      const { group, pair } = resolveSetThemeArgs(state, active, pairArgs);
+      setGroupTheme(state, group, pair);
+      setActiveGroup(state, group);
+      await paintGroupTheme(state, group);
+      await saveState(state);
     });
 
   // ── meta ─────────────────────────────────────────────────────────
@@ -662,14 +713,112 @@ export async function run(argv: string[]): Promise<void> {
       console.log(statePath());
     });
 
-  await program.parseAsync(argv);
+  try {
+    await program.parseAsync(argv);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`seance: ${friendlyError(msg)}`);
+    process.exit(1);
+  }
+}
+
+async function paintGroupTheme(state: SeanceState, name: string): Promise<void> {
+  const g = getGroup(state, name);
+  if (!g.themeName) {
+    throw new Error(`group "${name}" has no theme set — try "seance theme set ${name} <pair>"`);
+  }
+  const pair = getTheme(state, g.themeName);
+  if (!pair) {
+    throw new Error(
+      `unknown theme pair "${g.themeName}". See "seance theme list-pairs".`,
+    );
+  }
+  const appearance = await ghostty.currentAppearance();
+  const themeName = resolveTheme(pair, appearance);
+  const palette = await parseThemeFile(themeFilePath(themeName)).catch((err: Error) => {
+    throw new Error(`failed to load Ghostty theme "${themeName}": ${err.message}`);
+  });
+  const windows = g.windows.filter((w) => w.ttyPath);
+  if (windows.length === 0) {
+    throw new Error(`no TTY-tagged windows in "${name}"`);
+  }
+  let applied = 0;
+  for (const w of windows) {
+    try {
+      await ghostty.applyPaletteToTty(w.ttyPath!, palette);
+      applied++;
+    } catch (err) {
+      console.error(`  ${w.ttyPath}: ${(err as Error).message}`);
+    }
+  }
+  console.log(
+    `applied "${g.themeName}" → ${themeName} (${appearance}) to ${applied}/${windows.length} window(s) in "${name}"`,
+  );
+}
+
+/**
+ * Disambiguate `theme set <a> [rest...]` into {group, pair}:
+ *  - "set <pair-with-spaces>"        → joined `[a, ...rest]` is a known pair → active group
+ *  - "set <group> <pair-with-spaces>"→ rest is non-empty → group=a, pair=rest.join(" ")
+ *  - "set <pair>"                    → a is a known pair, rest empty → active group
+ *  - else                            → friendly error listing known pairs
+ */
+function resolveSetThemeArgs(
+  state: SeanceState,
+  a: string,
+  rest: string[],
+): { group: string; pair: string } {
+  const known = new Set(listThemePairs(state).map((p) => p.name));
+  const joined = [a, ...rest].join(" ");
+  if (known.has(joined)) {
+    const active = resolveActiveGroup(state);
+    if (!active) {
+      throw new Error(
+        `no active group. Use "seance theme set <group> ${joined}" or run "seance init" first.`,
+      );
+    }
+    return { group: active, pair: joined };
+  }
+  if (rest.length > 0) {
+    const pair = rest.join(" ");
+    if (!known.has(pair)) {
+      throw new Error(themePairNotFoundMessage(pair, [...known]));
+    }
+    return { group: a, pair };
+  }
+  if (known.has(a)) {
+    const active = resolveActiveGroup(state);
+    if (!active) {
+      throw new Error(
+        `no active group. Use "seance theme set <group> ${a}" or run "seance init" first.`,
+      );
+    }
+    return { group: active, pair: a };
+  }
+  throw new Error(themePairNotFoundMessage(a, [...known]));
+}
+
+function themePairNotFoundMessage(attempted: string, known: string[]): string {
+  return (
+    `no theme pair "${attempted}". Registered pairs: ${known.sort().join(", ")}.\n` +
+    `  Tip: pair names are seance's short labels (e.g. "Ayu"), not raw Ghostty theme names (e.g. "Ayu Mirage").`
+  );
 }
 
 if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {
   run(process.argv).catch((err: unknown) => {
-    console.error(err instanceof Error ? err.message : err);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`seance: ${friendlyError(msg)}`);
     process.exit(1);
   });
+}
+
+function friendlyError(msg: string): string {
+  const m = /^no such group "(.+)"$/.exec(msg.trim());
+  if (m) {
+    return `no group "${m[1]}". Run "seance group list" to see groups, or "seance init <name>" to create one.`;
+  }
+  return msg.replace(/^seance:\s*/, "");
 }
 
 function printWindowsTable(
@@ -714,45 +863,6 @@ function printWindowsTable(
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
-}
-
-interface Assignment {
-  axIndex: number;
-  group: string;
-  slot?: number;
-}
-
-async function promptAssignments(): Promise<Assignment[]> {
-  console.log(
-    "\nAssign: <idx> <group> [slot]  (one per line, blank line to finish)",
-  );
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const out: Assignment[] = [];
-  return new Promise((resolve) => {
-    const ask = () => {
-      rl.question("> ", (line) => {
-        const trimmed = line.trim();
-        if (!trimmed) {
-          rl.close();
-          resolve(out);
-          return;
-        }
-        const parts = trimmed.split(/\s+/);
-        const idx = Number(parts[0]);
-        const group = parts[1];
-        const slot = parts[2] !== undefined ? Number(parts[2]) : undefined;
-        if (!Number.isInteger(idx) || idx < 1 || !group) {
-          console.log("  usage: <idx> <group> [slot]");
-        } else if (slot !== undefined && (!Number.isInteger(slot) || slot < 1)) {
-          console.log("  slot must be a positive integer");
-        } else {
-          out.push({ axIndex: idx, group, ...(slot !== undefined ? { slot } : {}) });
-        }
-        ask();
-      });
-    };
-    ask();
-  });
 }
 
 function ask(rl: readline.Interface, prompt: string): Promise<string> {

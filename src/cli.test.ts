@@ -100,7 +100,7 @@ describe("seance CLI (black-box, SEANCE_HOME isolated)", () => {
     await withSeanceDir(async (dir) => {
       const r = await runSeance(["group", "show", "ghost"], dir);
       expect(r.exitCode).not.toBe(0);
-      expect(r.stderr.toLowerCase()).toContain("no such group");
+      expect(r.stderr.toLowerCase()).toContain('no group "ghost"');
     });
   });
 

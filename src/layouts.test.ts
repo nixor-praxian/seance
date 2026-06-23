@@ -5,6 +5,7 @@ import {
   tileGrid,
   tileCustomColumns,
   tile,
+  cocoaFramesToAx,
 } from "./layouts.js";
 import type { Rect } from "./types.js";
 
@@ -97,5 +98,33 @@ describe("tile dispatcher", () => {
 
   it("dispatches custom column specs", () => {
     expect(tile(screen, { cols: [1, 1, 1] })).toHaveLength(3);
+  });
+});
+
+describe("cocoaFramesToAx", () => {
+  // A real 3-display rig: 1728x1117 Retina primary at Cocoa (0,0) with a 38px
+  // menu bar, plus two 1920x1080 externals stacked above it in Cocoa space.
+  const primaryFrameHeight = 1117;
+  const visibleFrames = [
+    { x: 0, y: 0, width: 1728, height: 1079 }, // primary (main), menu bar excluded
+    { x: 829, y: 1117, width: 1920, height: 1080 }, // right external
+    { x: -1091, y: 1117, width: 1920, height: 1080 }, // left external
+  ];
+
+  it("flips the primary against its full frame height (menu-bar offset)", () => {
+    const [main] = cocoaFramesToAx(visibleFrames, primaryFrameHeight);
+    expect(main).toEqual({ x: 0, y: 38, width: 1728, height: 1079 });
+  });
+
+  it("anchors secondary displays to the primary height, yielding negative y", () => {
+    const out = cocoaFramesToAx(visibleFrames, primaryFrameHeight);
+    expect(out[1]).toEqual({ x: 829, y: -1080, width: 1920, height: 1080 });
+    expect(out[2]).toEqual({ x: -1091, y: -1080, width: 1920, height: 1080 });
+  });
+
+  it("preserves input order and length", () => {
+    const out = cocoaFramesToAx(visibleFrames, primaryFrameHeight);
+    expect(out).toHaveLength(3);
+    expect(out.map((r) => r.x)).toEqual([0, 829, -1091]);
   });
 });

@@ -1,6 +1,7 @@
 import { execa } from "execa";
 import { promises as fs } from "node:fs";
 import type { Rect, WindowRef } from "./types.js";
+import { cocoaFramesToAx, type CocoaRect } from "./layouts.js";
 import type { ThemePalette } from "./themes.js";
 import type { Appearance } from "./themes.js";
 
@@ -230,30 +231,73 @@ export async function setWindowBounds(
   );
 }
 
+export interface ScreenInfo {
+  /**
+   * 0-based index into NSScreen.screens. Convenient for `--screen <n>`, but
+   * NOT stable: the array reorders on focus change / reconnect. Persist
+   * `displayId` instead.
+   */
+  index: number;
+  /** Stable CGDirectDisplayID (NSScreenNumber). Survives reorder/reconnect. */
+  displayId: number;
+  /** Visible frame in AX coordinates (top-left origin, excl. menu bar / dock). */
+  rect: Rect;
+  /** The screen with keyboard focus (NSScreen.mainScreen). */
+  isMain: boolean;
+  /** The screen at Cocoa origin (0,0) — carries the menu bar. */
+  isPrimary: boolean;
+}
+
 /**
- * Visible screen frame of the main display in AX coordinates
- * (top-left origin, excludes menu bar and dock).
+ * Enumerate every display as an AX-space rect (top-left origin, excludes menu
+ * bar and dock), in NSScreen.screens order.
  *
- * Uses NSScreen.visibleFrame via JXA. visibleFrame is in Cocoa coords
- * (bottom-left origin), so we flip y against the full frame height.
+ * visibleFrame is in Cocoa coords (bottom-left origin, y-up, one global space).
+ * We read each screen's visibleFrame plus the primary display's full frame
+ * height, then flip in pure TS via cocoaFramesToAx. Secondary displays flip
+ * against the *primary* height, which is why they land at negative AX y.
  */
-export async function mainScreenFrame(): Promise<Rect> {
+export async function listScreens(): Promise<ScreenInfo[]> {
   const script = `
     ObjC.import('AppKit');
-    const screen = $.NSScreen.mainScreen;
-    const fullH = screen.frame.size.height;
-    const v = screen.visibleFrame;
-    const topY = fullH - (v.origin.y + v.size.height);
-    [v.origin.x, topY, v.size.width, v.size.height].join('\\t');
+    const screens = $.NSScreen.screens;
+    const main = $.NSScreen.mainScreen;
+    let primaryH = 0;
+    for (let i = 0; i < screens.count; i++) {
+      const f = screens.objectAtIndex(i).frame;
+      if (f.origin.x === 0 && f.origin.y === 0) { primaryH = f.size.height; break; }
+    }
+    if (primaryH === 0 && screens.count > 0) primaryH = screens.objectAtIndex(0).frame.size.height;
+    const lines = [String(primaryH)];
+    for (let i = 0; i < screens.count; i++) {
+      const s = screens.objectAtIndex(i);
+      const v = s.visibleFrame;
+      const f = s.frame;
+      const isMain = s.isEqual(main) ? 1 : 0;
+      const isPrimary = (f.origin.x === 0 && f.origin.y === 0) ? 1 : 0;
+      const did = s.deviceDescription.objectForKey("NSScreenNumber").js;
+      lines.push([v.origin.x, v.origin.y, v.size.width, v.size.height, isMain, isPrimary, did].join('\\t'));
+    }
+    lines.join('\\n');
   `;
   const raw = await osascript(script, { language: "JavaScript" });
-  const [x, y, w, h] = raw.split("\t").map(Number);
-  return {
-    x: x ?? 0,
-    y: y ?? 0,
-    width: w ?? 0,
-    height: h ?? 0,
-  };
+  const lines = raw.split("\n").filter((l) => l.length > 0);
+  const primaryH = Number(lines[0] ?? 0);
+  const parsed = lines.slice(1).map((line) => line.split("\t").map(Number));
+  const visibleFrames: CocoaRect[] = parsed.map((p) => ({
+    x: p[0] ?? 0,
+    y: p[1] ?? 0,
+    width: p[2] ?? 0,
+    height: p[3] ?? 0,
+  }));
+  const rects = cocoaFramesToAx(visibleFrames, primaryH);
+  return rects.map((rect, i) => ({
+    index: i,
+    displayId: parsed[i]?.[6] ?? 0,
+    rect,
+    isMain: parsed[i]?.[4] === 1,
+    isPrimary: parsed[i]?.[5] === 1,
+  }));
 }
 
 /**

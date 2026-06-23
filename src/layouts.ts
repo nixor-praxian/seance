@@ -136,6 +136,34 @@ export function tile(screen: Rect, spec: LayoutSpec, opts?: LayoutOptions): Rect
   throw new Error("unknown layout spec");
 }
 
+/** A screen rect in Cocoa coordinates (bottom-left origin, y-up). */
+export interface CocoaRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Convert NSScreen visibleFrames (Cocoa: bottom-left origin, y increases up,
+ * one global space anchored at the primary display) into AX / System-Events
+ * rects (top-left origin, y increases down).
+ *
+ * The flip is anchored to the *primary* display's full frame height — the
+ * screen whose Cocoa origin is (0,0), which is the one that carries the menu
+ * bar. Every screen flips against that same height, which is what gives
+ * secondary displays their correct (often negative) AX y. Input order is
+ * preserved so callers can index by NSScreen.screens position.
+ */
+export function cocoaFramesToAx(visibleFrames: CocoaRect[], primaryFrameHeight: number): Rect[] {
+  return visibleFrames.map((v) => ({
+    x: roundPx(v.x),
+    y: roundPx(primaryFrameHeight - (v.y + v.height)),
+    width: roundPx(v.width),
+    height: roundPx(v.height),
+  }));
+}
+
 function roundPx(n: number): number {
   return Math.round(n);
 }

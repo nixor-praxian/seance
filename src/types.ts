@@ -38,6 +38,11 @@ export interface Group {
   windows: WindowRef[];
   themeName?: string;
   lastLayout?: LayoutSpec;
+  /**
+   * Target display, stored as its stable CGDirectDisplayID (NSScreenNumber),
+   * not the volatile NSScreen.screens index. Absent / undefined = main display.
+   */
+  displayId?: number;
   createdAt: string;
   updatedAt: string;
 }

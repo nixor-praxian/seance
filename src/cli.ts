@@ -15,6 +15,7 @@ import {
   resolveActiveGroup,
   setActiveGroup,
   setGroupLayout,
+  setGroupDisplay,
   setGroupTheme,
 } from "./groups.js";
 import { parseCustomColumns, parseGrid, tile } from "./layouts.js";
@@ -95,7 +96,10 @@ export async function run(argv: string[]): Promise<void> {
       for (const g of groups) {
         const layout = g.lastLayout ? formatLayout(g.lastLayout) : "-";
         const theme = g.themeName ?? "-";
-        console.log(`${g.name}\t${g.windows.length} window(s)\tlayout=${layout}\ttheme=${theme}`);
+        const disp = g.displayId === undefined ? "main" : `id${g.displayId}`;
+        console.log(
+          `${g.name}\t${g.windows.length} window(s)\tlayout=${layout}\tdisplay=${disp}\ttheme=${theme}`,
+        );
       }
     });
 
@@ -108,6 +112,7 @@ export async function run(argv: string[]): Promise<void> {
       console.log(`group:       ${g.name}`);
       console.log(`theme:       ${g.themeName ?? "-"}`);
       console.log(`last layout: ${g.lastLayout ? formatLayout(g.lastLayout) : "-"}`);
+      console.log(`display:     ${g.displayId === undefined ? "main" : `id ${g.displayId}`}`);
       console.log(`windows:     ${g.windows.length}`);
       if (g.windows.length === 0) return;
       const sorted = [...g.windows].sort((a, b) => (a.slot ?? 99) - (b.slot ?? 99));
@@ -145,11 +150,12 @@ export async function run(argv: string[]): Promise<void> {
     .option("--rows <n>", "rows when using --cols", (v) => Number(v))
     .option("--gap <px>", "gap between tiles in px", (v) => Number(v), 0)
     .option("--padding <px>", "outer padding in px", (v) => Number(v), 0)
+    .option("--screen <n>", "target display index (see `seance screens`)", (v) => Number(v))
     .action(
       async (
         arg1: string | undefined,
         arg2: string | undefined,
-        opts: { cols?: string; rows?: number; gap: number; padding: number },
+        opts: { cols?: string; rows?: number; gap: number; padding: number; screen?: number },
       ) => {
         const state = await loadState();
         const looksLikeSpec = (s: string | undefined) => !!s && /^\d+\s*[xX]\s*\d+$/.test(s);
@@ -187,8 +193,12 @@ export async function run(argv: string[]): Promise<void> {
           throw new Error('provide a spec (e.g. "2x2") or --cols');
         }
 
-        const screen = await ghostty.mainScreenFrame();
-        const rects = tile(screen, layout, { gap: opts.gap, padding: opts.padding });
+        const screens = await ghostty.listScreens();
+        const target = pickScreen(screens, {
+          ...(opts.screen !== undefined ? { index: opts.screen } : {}),
+          ...(g.displayId !== undefined ? { displayId: g.displayId } : {}),
+        });
+        const rects = tile(target.rect, layout, { gap: opts.gap, padding: opts.padding });
 
         await ghostty.activate();
         const plans = buildSlotPlans(g.windows, rects);
@@ -200,9 +210,10 @@ export async function run(argv: string[]): Promise<void> {
         await ghostty.setWindowBounds(plans);
 
         setGroupLayout(state, name, layout);
+        setGroupDisplay(state, name, target.displayId);
         setActiveGroup(state, name);
         await saveState(state);
-        console.log(`arranged ${plans.length} window(s) in "${name}"`);
+        console.log(`arranged ${plans.length} window(s) in "${name}" on display ${target.index}`);
       },
     );
 
@@ -224,8 +235,12 @@ export async function run(argv: string[]): Promise<void> {
         console.log(`focused Ghostty (no layout stored for "${name}" yet)`);
         return;
       }
-      const screen = await ghostty.mainScreenFrame();
-      const rects = tile(screen, g.lastLayout);
+      const screens = await ghostty.listScreens();
+      const target = pickScreen(screens, g.displayId !== undefined ? { displayId: g.displayId } : {});
+      if (g.displayId !== undefined && target.displayId !== g.displayId) {
+        console.log(`(display ${g.displayId} not connected — using main)`);
+      }
+      const rects = tile(target.rect, g.lastLayout);
       const plans = buildSlotPlans(g.windows, rects);
       if (plans.length === 0) {
         console.log(`focused Ghostty (no TTY-tagged windows in "${name}")`);
@@ -523,6 +538,26 @@ export async function run(argv: string[]): Promise<void> {
           }
           console.log(`  ✓ added ${picks.length} window(s) to "${name}"`);
 
+          const screens = await ghostty.listScreens();
+          if (screens.length > 1) {
+            console.log("\nTarget display (Enter for 0 = main):");
+            for (const s of screens) {
+              const size = `${s.rect.width}x${s.rect.height}`;
+              const role = s.isMain ? " (main)" : "";
+              console.log(`  ${s.index}) ${size} @ ${s.rect.x},${s.rect.y}${role}`);
+            }
+            const sRaw = (await ask(rl, "> ")).trim();
+            if (sRaw) {
+              const sIdx = Number(sRaw);
+              if (Number.isInteger(sIdx) && sIdx >= 0 && sIdx < screens.length) {
+                setGroupDisplay(state, name, screens[sIdx]!.displayId);
+                console.log(`  ✓ target display ${sIdx}`);
+              } else {
+                console.error(`  ! invalid display "${sRaw}", using main`);
+              }
+            }
+          }
+
           if (opts.theme) {
             const pairs = listThemePairs(state);
             console.log("\nTheme pair (Enter to skip):");
@@ -573,8 +608,12 @@ export async function run(argv: string[]): Promise<void> {
           await saveState(state);
 
           if (layout) {
-            const screen = await ghostty.mainScreenFrame();
-            const rects = tile(screen, layout);
+            const gScreen = state.groups[name]!;
+            const target = pickScreen(
+              screens,
+              gScreen.displayId !== undefined ? { displayId: gScreen.displayId } : {},
+            );
+            const rects = tile(target.rect, layout);
             const plans = buildSlotPlans(state.groups[name]!.windows, rects);
             if (plans.length > 0) {
               await ghostty.activate();
@@ -703,6 +742,30 @@ export async function run(argv: string[]): Promise<void> {
       setActiveGroup(state, group);
       await paintGroupTheme(state, group);
       await saveState(state);
+    });
+
+  // ── screens ──────────────────────────────────────────────────────
+  program
+    .command("screens")
+    .description("List displays seance can target. The index feeds `grid --screen <n>`.")
+    .action(async () => {
+      const screens = await ghostty.listScreens();
+      if (screens.length === 0) {
+        console.log("(no displays detected)");
+        return;
+      }
+      console.log("IDX  ID    SIZE         POSITION         ROLE");
+      console.log("---  ----  -----------  ---------------  ----");
+      for (const s of screens) {
+        const size = `${s.rect.width}x${s.rect.height}`;
+        const pos = `${s.rect.x},${s.rect.y}`;
+        const role = [s.isMain ? "main" : "", s.isPrimary ? "primary" : ""]
+          .filter(Boolean)
+          .join("+") || "external";
+        console.log(
+          `${String(s.index).padEnd(3)}  ${String(s.displayId).padEnd(4)}  ${size.padEnd(11)}  ${pos.padEnd(15)}  ${role}`,
+        );
+      }
     });
 
   // ── meta ─────────────────────────────────────────────────────────
@@ -875,6 +938,32 @@ function defaultGrid(n: number): { cols: number; rows: number } {
   const rows = Math.max(1, Math.floor(Math.sqrt(n)));
   const cols = Math.ceil(n / rows);
   return { cols, rows };
+}
+
+/**
+ * Choose a target display. An explicit `index` (from `--screen <n>`) wins and
+ * errors if out of range. Otherwise fall back to the group's persisted
+ * `displayId` (matched against the current screens), then to the main display.
+ * Returns the live ScreenInfo so the caller persists the stable displayId.
+ */
+function pickScreen(
+  screens: ghostty.ScreenInfo[],
+  opts: { index?: number; displayId?: number },
+): ghostty.ScreenInfo {
+  if (screens.length === 0) throw new Error("no displays detected");
+  if (opts.index !== undefined) {
+    const s = screens[opts.index];
+    if (!s) {
+      const have = screens.length === 1 ? "only display 0" : `displays 0..${screens.length - 1}`;
+      throw new Error(`no display #${opts.index} — ${have} present. See "seance screens".`);
+    }
+    return s;
+  }
+  if (opts.displayId !== undefined) {
+    const s = screens.find((x) => x.displayId === opts.displayId);
+    if (s) return s;
+  }
+  return screens.find((s) => s.isMain) ?? screens[0]!;
 }
 
 function buildSlotPlans(

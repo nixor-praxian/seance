@@ -198,6 +198,9 @@ export async function run(argv: string[]): Promise<void> {
           ...(opts.screen !== undefined ? { index: opts.screen } : {}),
           ...(g.displayId !== undefined ? { displayId: g.displayId } : {}),
         });
+        if (opts.screen === undefined && g.displayId !== undefined && target.displayId !== g.displayId) {
+          console.log(`(display ${g.displayId} not connected — tiling on main to avoid stranding windows)`);
+        }
         const rects = tile(target.rect, layout, { gap: opts.gap, padding: opts.padding });
 
         await ghostty.activate();
@@ -248,6 +251,72 @@ export async function run(argv: string[]): Promise<void> {
       }
       await ghostty.setWindowBounds(plans);
       console.log(`summoned "${name}"`);
+    });
+
+  // ── gather ───────────────────────────────────────────────────────
+  program
+    .command("gather [name]")
+    .description(
+      "Re-tile a group on its display and report any windows stranded on another Space (with how to recover them). Defaults to the active group.",
+    )
+    .action(async (nameArg: string | undefined) => {
+      const state = await loadState();
+      const name = nameArg ?? resolveActiveGroup(state);
+      if (!name) {
+        throw new Error('no active group. Pass one: "seance gather <name>"');
+      }
+      const g = getGroup(state, name);
+      await ghostty.activate();
+      setActiveGroup(state, name);
+      await saveState(state);
+
+      const tagged = g.windows.filter(
+        (w): w is WindowRef & { ttyPath: string } => !!w.ttyPath && w.slot !== undefined,
+      );
+      if (tagged.length === 0) {
+        console.log(`no slotted+TTY-tagged windows in "${name}".`);
+        return;
+      }
+
+      // Windows we can locate via the System-Events sentinel are on the current
+      // Space; the rest are stranded on another Space (or busy reasserting a
+      // title). Tile only the reachable ones — never move a phantom.
+      const present = await ghostty.currentRectsByTty(tagged.map((w) => w.ttyPath));
+      const onSpace = tagged.filter((w) => present.has(w.ttyPath));
+      const stranded = tagged.filter((w) => !present.has(w.ttyPath));
+
+      if (g.lastLayout && onSpace.length > 0) {
+        const screens = await ghostty.listScreens();
+        const target = pickScreen(
+          screens,
+          g.displayId !== undefined ? { displayId: g.displayId } : {},
+        );
+        if (g.displayId !== undefined && target.displayId !== g.displayId) {
+          console.log(`(display ${g.displayId} not connected — gathering on main)`);
+        }
+        const rects = tile(target.rect, g.lastLayout);
+        const plans = buildSlotPlans(onSpace, rects);
+        if (plans.length > 0) await ghostty.setWindowBounds(plans);
+        console.log(`gathered ${plans.length} window(s) of "${name}" on display ${target.index}`);
+      } else if (onSpace.length > 0) {
+        console.log(`${onSpace.length} window(s) reachable, but no layout stored — run "seance grid ${name} <NxM>" first.`);
+      }
+
+      if (stranded.length > 0) {
+        const hints = await ghostty.foregroundCommandsByTty(stranded.map((w) => w.ttyPath));
+        console.log(
+          `\n${stranded.length} window(s) could not be reached on this Space (stranded on another Space, or busy):`,
+        );
+        const sorted = [...stranded].sort((a, b) => (a.slot ?? 99) - (b.slot ?? 99));
+        for (const w of sorted) {
+          console.log(`  slot ${w.slot}  ${w.cwd ?? "?"}`);
+          const cmd = hints.get(w.ttyPath);
+          if (cmd) console.log(`           ↻ ${truncate(cmd, 80)}`);
+        }
+        console.log(
+          `  Recover: Mission Control (F3) and click them onto this Space, then re-run "seance gather ${name}".`,
+        );
+      }
     });
 
   // ── theme ────────────────────────────────────────────────────────
@@ -422,13 +491,15 @@ export async function run(argv: string[]): Promise<void> {
         const state = await loadState();
         const g = getGroup(state, name);
         const probes = await ghostty.probeWindows();
-        const newProbes = probes.filter((p) => newIds.has(p.ghosttyId));
+        const newProbes = probes.filter(
+          (p) => p.ghosttyId !== undefined && newIds.has(p.ghosttyId),
+        );
 
         for (const w of g.windows) {
           if (w.cwd === undefined) continue;
           const match = newProbes.find((p) => p.cwd === w.cwd);
           if (match) {
-            w.windowId = match.ghosttyId;
+            w.windowId = match.ghosttyId ?? `tty:${match.ttyPath}`;
             w.ttyPath = match.ttyPath;
           }
         }
@@ -530,7 +601,7 @@ export async function run(argv: string[]): Promise<void> {
             const p = probeByAx.get(axIdx)!;
             const slot = i + 1;
             addWindow(state, name, {
-              windowId: p.ghosttyId,
+              windowId: p.ghosttyId ?? `tty:${p.ttyPath}`,
               ttyPath: p.ttyPath,
               slot,
               ...(p.cwd ? { cwd: p.cwd } : {}),
@@ -706,7 +777,7 @@ export async function run(argv: string[]): Promise<void> {
           if (!state.groups[group]) createGroup(state, group);
           const finalSlot = slot ?? nextFreeSlot(state.groups[group]!);
           addWindow(state, group, {
-            windowId: p.ghosttyId,
+            windowId: p.ghosttyId ?? `tty:${p.ttyPath}`,
             ttyPath: p.ttyPath,
             slot: finalSlot,
             ...(p.cwd ? { cwd: p.cwd } : {}),
@@ -892,7 +963,7 @@ function printWindowsTable(
   const hasProbe = probeByAx.size > 0;
   const rows = ax.map((w) => {
     const p = probeByAx.get(w.axIndex);
-    const ghId = p ? p.ghosttyId.replace(/^tab-group-/, "") : "";
+    const ghId = p?.ghosttyId ? p.ghosttyId.replace(/^tab-group-/, "") : "";
     const tty = p ? p.ttyPath.replace(/^\/dev\//, "") : "";
     const cmd = p ? truncate(p.command, 50) : "";
     const cur = p?.ttyPath ? (ttyToGroupSlot.get(p.ttyPath) ?? "") : "";

@@ -418,7 +418,12 @@ export async function listAllWindows(): Promise<WindowInfo[]> {
 
 export interface ProbeRow {
   axIndex: number;
-  ghosttyId: string;
+  /**
+   * Ghostty's window id, when resolvable. Ghostty 1.3.x only exposes its key
+   * window to AppleScript, so this is usually absent — targeting relies on
+   * ttyPath + AX index, not this. Used opportunistically by `restore --rebind`.
+   */
+  ghosttyId?: string;
   ttyPath: string;
   command: string;
   cwd?: string;
@@ -552,17 +557,46 @@ export async function probeWindows(): Promise<ProbeRow[]> {
   for (const tty of ttys) {
     const ghId = ttyToGhId.get(tty);
     const axIdx = ttyToAx.get(tty);
-    if (!ghId || axIdx === undefined) continue;
+    // The AX index (resolved via the System-Events sentinel match) is the
+    // identity we actually target by. Ghostty 1.3.x only reports its key
+    // window, so ghId is usually absent — don't drop a window for lacking it.
+    if (axIdx === undefined) continue;
     const proc = deepest.get(tty);
     rows.push({
       axIndex: axIdx,
-      ghosttyId: ghId,
+      ...(ghId ? { ghosttyId: ghId } : {}),
       ttyPath: `/dev/${tty}`,
       command: proc?.command ?? "",
       ...(proc && cwds.get(proc.pid) ? { cwd: cwds.get(proc.pid)! } : {}),
     });
   }
   return rows.sort((a, b) => a.axIndex - b.axIndex);
+}
+
+/**
+ * Foreground command per TTY (the deepest / latest-forked process), e.g.
+ * `claude --resume <uuid>` or `-/bin/zsh`. Used by `gather` to tell the user
+ * how to recover a window that's stranded on another Space.
+ */
+export async function foregroundCommandsByTty(
+  ttyPaths: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (ttyPaths.length === 0) return out;
+  const wanted = new Set(ttyPaths.map((p) => p.replace(/^\/dev\//, "")));
+  const { stdout } = await execa("ps", ["-axo", "pid,tty,command"]);
+  const deepest = new Map<string, { pid: number; command: string }>();
+  for (const line of stdout.split("\n").slice(1)) {
+    const m = /^\s*(\d+)\s+(\S+)\s+(.+)$/.exec(line);
+    if (!m) continue;
+    const tty = m[2]!;
+    if (!wanted.has(tty)) continue;
+    const pid = Number(m[1]);
+    const cur = deepest.get(tty);
+    if (!cur || pid > cur.pid) deepest.set(tty, { pid, command: m[3]! });
+  }
+  for (const [tty, v] of deepest) out.set(`/dev/${tty}`, v.command);
+  return out;
 }
 
 async function cwdsForPids(pids: number[]): Promise<Map<number, string>> {

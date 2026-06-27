@@ -1,5 +1,6 @@
 import { execa } from "execa";
 import { promises as fs } from "node:fs";
+import { basename } from "node:path";
 import type { Rect, WindowRef } from "./types.js";
 import { cocoaFramesToAx, type CocoaRect } from "./layouts.js";
 import type { ThemePalette } from "./themes.js";
@@ -154,7 +155,7 @@ export async function currentTty(): Promise<string | undefined> {
  * Per-window TTY is required (captured at `group add` time).
  */
 export async function setWindowBounds(
-  plans: Array<{ ttyPath: string; rect: Rect }>,
+  plans: Array<{ ttyPath: string; rect: Rect; label?: string }>,
 ): Promise<void> {
   if (plans.length === 0) return;
 
@@ -163,6 +164,7 @@ export async function setWindowBounds(
     ttyPath: p.ttyPath,
     sentinel: `⎈seance:${stamp}:${i}`,
     rect: p.rect,
+    label: p.label,
   }));
 
   await Promise.all(
@@ -223,9 +225,9 @@ export async function setWindowBounds(
   // their own title within ms anyway, but idle/waiting windows stay readable.
   await Promise.all(
     stamped.map((s) => {
-      const ttyName = s.ttyPath.replace(/^\/dev\//, "");
+      const label = s.label ?? s.ttyPath.replace(/^\/dev\//, "");
       return fs
-        .writeFile(s.ttyPath, `\x1b]2;${ttyName}\x1b\\`, { flag: "a" })
+        .writeFile(s.ttyPath, `\x1b]2;${label}\x1b\\`, { flag: "a" })
         .catch(() => undefined);
     }),
   );
@@ -540,13 +542,11 @@ export async function probeWindows(): Promise<ProbeRow[]> {
   // written back, so minimized-window Dock tooltips don't show "⌬probe:…".
   // Active shells / Claude will reassert their own titles within ms; idle
   // and minimized windows will see this label until something else writes.
-  const home = process.env.HOME ?? "";
   await Promise.all(
     ttys.map((tty) => {
       const proc = deepest.get(tty);
       const cwd = proc ? cwds.get(proc.pid) : undefined;
-      const niceCwd = cwd && home && cwd.startsWith(home) ? cwd.replace(home, "~") : cwd;
-      const label = niceCwd ? `${tty} · ${niceCwd}` : tty;
+      const label = cwd ? basename(cwd) : tty;
       return fs
         .writeFile(`/dev/${tty}`, `\x1b]2;${label}\x1b\\`, { flag: "a" })
         .catch(() => undefined);

@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { promises as fs } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { loadState, saveState, savesDir, statePath } from "./state.js";
@@ -1040,14 +1040,14 @@ function pickScreen(
 function buildSlotPlans(
   windows: WindowRef[],
   rects: Rect[],
-): Array<{ ttyPath: string; rect: Rect }> {
-  const plans: Array<{ ttyPath: string; rect: Rect }> = [];
+): Array<{ ttyPath: string; rect: Rect; label?: string }> {
+  const plans: Array<{ ttyPath: string; rect: Rect; label?: string }> = [];
   for (const w of windows) {
     if (!w.ttyPath || w.slot === undefined) continue;
     const cellIdx = w.slot - 1;
     const r = rects[cellIdx];
     if (!r) continue;
-    plans.push({ ttyPath: w.ttyPath, rect: r });
+    plans.push({ ttyPath: w.ttyPath, rect: r, ...(w.cwd ? { label: basename(w.cwd) } : {}) });
   }
   return plans;
 }

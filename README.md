@@ -8,6 +8,8 @@
 
 - **Groups** — name a set of Ghostty windows (`seance group add dev --slot 1`); a group survives the rest of the session as a first-class object.
 - **Grids** — `seance grid dev 2x2` lays out the group as four equal panes, or `--cols 1,3` for custom column weights.
+- **Multi-display** — `seance screens` lists every connected display; `seance grid dev 2x2 --screen 1` tiles a group onto a specific monitor, remembered per-group by a stable display id so `summon` puts it back there.
+- **Self-healing layout** — `seance gather dev` re-tiles the windows it can reach and names the ones that drifted onto another macOS Space (with the command to recover each), instead of silently leaving them.
 - **Save / restore** — `seance save dev` emits a self-contained, human-readable AppleScript that spawns the same windows in the same cwds at the same rects, days later, in any state.
 - **Per-window theming** — `seance theme apply dev` paints the group's theme into each window via OSC palette sequences, so different on-screen groups can run different palettes simultaneously.
 - **Central inspection** — `seance windows --probe --assign` enumerates every Ghostty window with its tty, foreground command, cwd, and current group assignment, then assigns them to groups interactively.
@@ -145,8 +147,11 @@ seance windows --probe --assign # same table, then prompts for `<idx> <group> [s
 |---|---|
 | `seance grid <name> <NxM>` | Tile the group as N columns × M rows of equal cells. |
 | `seance grid <name> --cols 1,3 [--rows N]` | Custom column weights — `1,3` makes column 1 take 25% and column 2 take 75%. |
+| `seance grid <name> [...] --screen <n>` | Tile onto display `<n>` (see `seance screens`). The choice is saved per-group as a stable display id; falls back to main with a notice if that monitor is unplugged. |
 | `seance grid <name> [...] --gap 8 --padding 12` | Add pixel gap between tiles / outer padding from the screen edge. |
-| `seance summon <name>` | Activate Ghostty and re-apply the group's last-used layout. |
+| `seance summon <name>` | Activate Ghostty and re-apply the group's last-used layout, on its saved display. |
+| `seance gather <name>` | Re-tile the windows reachable on the current Space; report any stranded on another Space (with how to recover them). |
+| `seance screens` | List connected displays — index, stable id, size, position, role — for use with `grid --screen`. |
 
 ### Save / restore
 
@@ -221,9 +226,11 @@ This sidesteps every namespace mismatch and gives us deterministic per-window ta
 
 `setWindowBounds(plans[])` takes an array, not a single window+rect. Single-window calls in a loop break because each `position` set promotes the moved window to frontmost, shifting `window 1` for the next iteration. The batched script captures all references first, then applies all rects.
 
-### Why `NSScreen.visibleFrame` via JXA
+### Why `NSScreen.visibleFrame` via JXA, and how multi-display works
 
-`mainScreenFrame()` uses `osascript -l JavaScript` to call `NSScreen.mainScreen.visibleFrame`, which excludes the menu bar and Dock automatically. The earlier implementation used Finder's `bounds of window of desktop`, which returns the *full* display — tiles would end up under the menu bar.
+`listScreens()` uses `osascript -l JavaScript` to enumerate `NSScreen.screens`, reading each display's `visibleFrame` (which excludes the menu bar and Dock automatically — Finder's `bounds of window of desktop` returns the *full* display, so tiles would land under the menu bar). `visibleFrame` is in Cocoa coordinates (bottom-left origin, y-up, one global space). The pure `cocoaFramesToAx` helper flips each into AX coordinates (top-left, y-down), anchored to the **primary** display's full frame height — so a monitor sitting above/left of the primary correctly lands at negative AX y.
+
+A group remembers its target monitor by **`CGDirectDisplayID`** (`group.displayId`), not the `NSScreen.screens` array index. The index is volatile — the array reorders when keyboard focus moves between displays, and the ids themselves re-enumerate when a display reconnects — so persisting an index would tile a group onto the wrong monitor. `grid --screen <n>` resolves the index to a display id at run time and stores *that*; `summon`/`gather` resolve it back, falling back to the main display (with a notice) when the saved monitor is unplugged.
 
 ### Why themes apply per-window via OSC, not globally via config
 
@@ -345,12 +352,20 @@ Expected — that's the probe sentinel. Your shell or Claude Code will reset the
 
 Add `--rebind`: `seance restore <name> --rebind`. Without it, restore just runs the script; the new windows exist but seance doesn't track them.
 
+### A pane "disappeared"
+
+It's almost certainly stranded on another macOS Space, not closed — its shell/process is still alive (check `ps`). This happens when an external display disconnects (especially one that cycles on/off): the windows that lived on it get left on a Space with no screen. macOS Accessibility only sees the *current* Space, so seance can't pull it back automatically. Open **Mission Control** (F3) and click the window onto your current Space, then `seance gather <group>` to re-tile it. `gather` also lists which windows are stranded and how to recover each.
+
+### `seance windows --probe` shows no TTY / command columns
+
+On Ghostty 1.3.x the AppleScript dictionary only exposes one window, so the probe resolves windows purely through System Events — which only sees the **current Space**. Windows on other Spaces won't appear. Bring them over (Mission Control) and re-run. (If you're on a build where it returned *zero* windows entirely, update — that was a bug where probe required a Ghostty window id it could no longer get.)
+
 ## Roadmap
 
-- **v0.x** ✅ targeting, groups, grids, windows command, save/restore, per-window themes (where we are now)
+- **v0.x** ✅ targeting, groups, grids, windows command, save/restore, per-window themes, **multi-display tiling (`grid --screen`, `screens`), and `gather` for Space-stranded windows** (where we are now)
 - **v1** — project mode: auto-apply a theme + layout on `chpwd` via a shell hook; `.seance` files in repos
 - **v1.1** — cross-restart persistence: re-bind a saved group to live windows by cwd-matching when TTYs are gone
-- **future** — auto-arrangement (same project → adjacent slots), multi-display awareness, the `seance follow-appearance` daemon
+- **future** — auto-arrangement (same project → adjacent slots), a `gather --all` that restores every group's row + theme after a display cycle, the `seance follow-appearance` daemon
 
 ## License
 

@@ -329,6 +329,14 @@ export async function applyPaletteToTty(
 }
 
 /**
+ * Override just the background color of a window via OSC 11, written to its
+ * TTY. Used to paint a per-group background on top of an applied theme.
+ */
+export async function applyBackgroundToTty(ttyPath: string, color: string): Promise<void> {
+  await fs.writeFile(ttyPath, `\x1b]11;${color}\x1b\\`, { flag: "a" });
+}
+
+/**
  * Detect the active macOS appearance via `defaults read -g AppleInterfaceStyle`.
  * Returns "dark" when the key is "Dark", "light" when the key is absent
  * (defaults exits non-zero) or returns anything else.

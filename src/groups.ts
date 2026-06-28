@@ -92,3 +92,11 @@ export function setGroupDisplay(state: SeanceState, name: string, displayId: num
   g.updatedAt = new Date().toISOString();
   return g;
 }
+
+export function setGroupBackground(state: SeanceState, name: string, color: string | null): Group {
+  const g = getGroup(state, name);
+  if (color === null) delete g.background;
+  else g.background = color;
+  g.updatedAt = new Date().toISOString();
+  return g;
+}

@@ -16,6 +16,7 @@ import {
   setActiveGroup,
   setGroupLayout,
   setGroupDisplay,
+  setGroupBackground,
   setGroupTheme,
 } from "./groups.js";
 import { parseCustomColumns, parseGrid, tile } from "./layouts.js";
@@ -110,7 +111,7 @@ export async function run(argv: string[]): Promise<void> {
       const state = await loadState();
       const g = getGroup(state, name);
       console.log(`group:       ${g.name}`);
-      console.log(`theme:       ${g.themeName ?? "-"}`);
+      console.log(`theme:       ${g.themeName ?? "-"}${g.background ? ` (bg ${g.background})` : ""}`);
       console.log(`last layout: ${g.lastLayout ? formatLayout(g.lastLayout) : "-"}`);
       console.log(`display:     ${g.displayId === undefined ? "main" : `id ${g.displayId}`}`);
       console.log(`windows:     ${g.windows.length}`);
@@ -815,6 +816,35 @@ export async function run(argv: string[]): Promise<void> {
       await saveState(state);
     });
 
+  // ── background ───────────────────────────────────────────────────
+  program
+    .command("background <group> <color>")
+    .description(
+      'Set a per-group background override painted on top of the theme (e.g. "#2e4636"). "none" clears it.',
+    )
+    .action(async (group: string, color: string) => {
+      const state = await loadState();
+      const g = getGroup(state, group);
+      const clear = color.toLowerCase() === "none";
+      setGroupBackground(state, group, clear ? null : color);
+      setActiveGroup(state, group);
+      if (g.themeName) {
+        await paintGroupTheme(state, group);
+      } else if (!clear) {
+        const windows = g.windows.filter((w) => w.ttyPath);
+        for (const w of windows) {
+          try {
+            await ghostty.applyBackgroundToTty(w.ttyPath!, color);
+          } catch (err) {
+            console.error(`  ${w.ttyPath}: ${(err as Error).message}`);
+          }
+        }
+        console.log(`painted bg ${color} to ${windows.length} window(s) in "${group}"`);
+      }
+      await saveState(state);
+      if (clear) console.log(`cleared background override for "${group}"`);
+    });
+
   // ── screens ──────────────────────────────────────────────────────
   program
     .command("screens")
@@ -880,13 +910,14 @@ async function paintGroupTheme(state: SeanceState, name: string): Promise<void> 
   for (const w of windows) {
     try {
       await ghostty.applyPaletteToTty(w.ttyPath!, palette);
+      if (g.background) await ghostty.applyBackgroundToTty(w.ttyPath!, g.background);
       applied++;
     } catch (err) {
       console.error(`  ${w.ttyPath}: ${(err as Error).message}`);
     }
   }
   console.log(
-    `applied "${g.themeName}" → ${themeName} (${appearance}) to ${applied}/${windows.length} window(s) in "${name}"`,
+    `applied "${g.themeName}" → ${themeName} (${appearance})${g.background ? ` + bg ${g.background}` : ""} to ${applied}/${windows.length} window(s) in "${name}"`,
   );
 }
 

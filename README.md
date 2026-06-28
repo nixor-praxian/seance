@@ -177,6 +177,7 @@ seance windows --probe --assign # same table, then prompts for `<idx> <group> [s
 | `seance theme register <name> --dark <X> --light <Y>` | Register or overwrite a pair. |
 | `seance theme set <group> <pair-name>` | Assign a theme pair to a group. |
 | `seance theme apply <group>` | Paint the group's pair into each of its windows via OSC palette sequences. Resolves dark vs light via the current macOS appearance. |
+| `seance background <group> <color>` | Set a per-group background override (e.g. `#2e4636`) painted on top of the theme — survives `theme apply`/`use`. Pass `none` to clear. |
 
 ### Meta
 

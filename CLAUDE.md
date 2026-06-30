@@ -67,7 +67,6 @@ TypeScript is strict: `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, 
 - Multi-display works (`grid --screen <n>`, `seance screens`), but two macOS realities remain: (a) a window on another **Space** is invisible to Accessibility, so seance can't tile it until it's on the current Space — externals that cycle on/off strand windows this way (`gather` surfaces them); (b) `CGDirectDisplayID` re-enumerates when a display reconnects, so a group's saved `displayId` can go stale (falls back to main with a notice).
 - `cwd` for `windows --assign` comes from `lsof` against the foreground PID — may return nothing for sandboxed children (e.g. some Claude Code invocations).
 - TTY-based identity dies with the shell. Closing a window invalidates its `ttyPath`; you have to `group add` again from the new shell.
-- `currentRectsByTty` (used by `save`) writes a title sentinel and does **not** restore the original title — it leaves an `⎈seance-read:…` label behind. Known rough edge; not yet fixed.
 
 ## Recent significant decisions (log)
 

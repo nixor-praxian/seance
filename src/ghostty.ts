@@ -704,14 +704,21 @@ export async function runScriptFile(path: string): Promise<void> {
  * Read the current rect of each window identified by ttyPath. Uses the same
  * sentinel-via-TTY trick as setWindowBounds, but only reads instead of moves.
  * Returns Map<ttyPath, Rect>; missing entries mean the window couldn't be located.
+ *
+ * Reading clobbers the title with a sentinel, so afterwards we restore a
+ * readable label (the caller-supplied `label`, e.g. the repo, falling back to
+ * the tty basename) — otherwise idle windows are left wearing "⎈seance-read:…".
  */
-export async function currentRectsByTty(ttyPaths: string[]): Promise<Map<string, Rect>> {
+export async function currentRectsByTty(
+  targets: Array<{ ttyPath: string; label?: string }>,
+): Promise<Map<string, Rect>> {
   const result = new Map<string, Rect>();
-  if (ttyPaths.length === 0) return result;
+  if (targets.length === 0) return result;
 
   const stamp = Date.now().toString(36);
-  const stamped = ttyPaths.map((ttyPath, i) => ({
-    ttyPath,
+  const stamped = targets.map((t, i) => ({
+    ttyPath: t.ttyPath,
+    label: t.label,
     sentinel: `⎈seance-read:${stamp}:${i}`,
   }));
 
@@ -758,6 +765,15 @@ export async function currentRectsByTty(ttyPaths: string[]): Promise<Map<string,
       height: Number(h),
     });
   }
+
+  // Restore a readable title — the sentinel must not linger on idle windows.
+  await Promise.all(
+    stamped.map((s) => {
+      const label = s.label ?? s.ttyPath.replace(/^\/dev\//, "");
+      return fs.writeFile(s.ttyPath, `\x1b]2;${label}\x1b\\`, { flag: "a" }).catch(() => undefined);
+    }),
+  );
+
   return result;
 }
 

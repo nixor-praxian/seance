@@ -37,8 +37,12 @@ export interface Group {
   name: string;
   windows: WindowRef[];
   themeName?: string;
-  /** Background color override (e.g. "#2e4636") painted on top of the theme. */
-  background?: string;
+  /**
+   * Background color override painted on top of the theme. Either a single
+   * color (e.g. "#2e4636") used in both appearances, or an appearance-aware
+   * pair resolved like the theme itself.
+   */
+  background?: string | { dark: string; light: string };
   lastLayout?: LayoutSpec;
   /**
    * Target display, stored as its stable CGDirectDisplayID (NSScreenNumber),

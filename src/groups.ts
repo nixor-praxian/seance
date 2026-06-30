@@ -93,7 +93,11 @@ export function setGroupDisplay(state: SeanceState, name: string, displayId: num
   return g;
 }
 
-export function setGroupBackground(state: SeanceState, name: string, color: string | null): Group {
+export function setGroupBackground(
+  state: SeanceState,
+  name: string,
+  color: string | { dark: string; light: string } | null,
+): Group {
   const g = getGroup(state, name);
   if (color === null) delete g.background;
   else g.background = color;

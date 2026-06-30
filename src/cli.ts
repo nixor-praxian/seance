@@ -111,7 +111,13 @@ export async function run(argv: string[]): Promise<void> {
       const state = await loadState();
       const g = getGroup(state, name);
       console.log(`group:       ${g.name}`);
-      console.log(`theme:       ${g.themeName ?? "-"}${g.background ? ` (bg ${g.background})` : ""}`);
+      const bgStr =
+        g.background == null
+          ? ""
+          : typeof g.background === "string"
+            ? ` (bg ${g.background})`
+            : ` (bg dark ${g.background.dark} / light ${g.background.light})`;
+      console.log(`theme:       ${g.themeName ?? "-"}${bgStr}`);
       console.log(`last layout: ${g.lastLayout ? formatLayout(g.lastLayout) : "-"}`);
       console.log(`display:     ${g.displayId === undefined ? "main" : `id ${g.displayId}`}`);
       console.log(`windows:     ${g.windows.length}`);
@@ -282,7 +288,9 @@ export async function run(argv: string[]): Promise<void> {
       // Windows we can locate via the System-Events sentinel are on the current
       // Space; the rest are stranded on another Space (or busy reasserting a
       // title). Tile only the reachable ones — never move a phantom.
-      const present = await ghostty.currentRectsByTty(tagged.map((w) => w.ttyPath));
+      const present = await ghostty.currentRectsByTty(
+        tagged.map((w) => ({ ttyPath: w.ttyPath, ...(w.cwd ? { label: basename(w.cwd) } : {}) })),
+      );
       const onSpace = tagged.filter((w) => present.has(w.ttyPath));
       const stranded = tagged.filter((w) => !present.has(w.ttyPath));
 
@@ -420,7 +428,9 @@ export async function run(argv: string[]): Promise<void> {
         return;
       }
 
-      const rects = await ghostty.currentRectsByTty(tagged.map((w) => w.ttyPath));
+      const rects = await ghostty.currentRectsByTty(
+        tagged.map((w) => ({ ttyPath: w.ttyPath, label: basename(w.cwd) })),
+      );
       const entries = tagged
         .map((w) => {
           const rect = rects.get(w.ttyPath);
@@ -818,28 +828,30 @@ export async function run(argv: string[]): Promise<void> {
 
   // ── background ───────────────────────────────────────────────────
   program
-    .command("background <group> <color>")
+    .command("background <group> <color> [light]")
     .description(
-      'Set a per-group background override painted on top of the theme (e.g. "#2e4636"). "none" clears it.',
+      'Per-group background override painted on top of the theme. One color for both appearances, or "<dark> <light>" for an appearance-aware pair. "none" clears it.',
     )
-    .action(async (group: string, color: string) => {
+    .action(async (group: string, color: string, light: string | undefined) => {
       const state = await loadState();
       const g = getGroup(state, group);
       const clear = color.toLowerCase() === "none";
-      setGroupBackground(state, group, clear ? null : color);
+      setGroupBackground(state, group, clear ? null : light ? { dark: color, light } : color);
       setActiveGroup(state, group);
       if (g.themeName) {
         await paintGroupTheme(state, group);
       } else if (!clear) {
+        const appearance = await ghostty.currentAppearance();
+        const bg = light ? (appearance === "dark" ? color : light) : color;
         const windows = g.windows.filter((w) => w.ttyPath);
         for (const w of windows) {
           try {
-            await ghostty.applyBackgroundToTty(w.ttyPath!, color);
+            await ghostty.applyBackgroundToTty(w.ttyPath!, bg);
           } catch (err) {
             console.error(`  ${w.ttyPath}: ${(err as Error).message}`);
           }
         }
-        console.log(`painted bg ${color} to ${windows.length} window(s) in "${group}"`);
+        console.log(`painted bg ${bg} to ${windows.length} window(s) in "${group}"`);
       }
       await saveState(state);
       if (clear) console.log(`cleared background override for "${group}"`);
@@ -906,18 +918,26 @@ async function paintGroupTheme(state: SeanceState, name: string): Promise<void> 
   if (windows.length === 0) {
     throw new Error(`no TTY-tagged windows in "${name}"`);
   }
+  const bg =
+    g.background == null
+      ? undefined
+      : typeof g.background === "string"
+        ? g.background
+        : appearance === "dark"
+          ? g.background.dark
+          : g.background.light;
   let applied = 0;
   for (const w of windows) {
     try {
       await ghostty.applyPaletteToTty(w.ttyPath!, palette);
-      if (g.background) await ghostty.applyBackgroundToTty(w.ttyPath!, g.background);
+      if (bg) await ghostty.applyBackgroundToTty(w.ttyPath!, bg);
       applied++;
     } catch (err) {
       console.error(`  ${w.ttyPath}: ${(err as Error).message}`);
     }
   }
   console.log(
-    `applied "${g.themeName}" → ${themeName} (${appearance})${g.background ? ` + bg ${g.background}` : ""} to ${applied}/${windows.length} window(s) in "${name}"`,
+    `applied "${g.themeName}" → ${themeName} (${appearance})${bg ? ` + bg ${bg}` : ""} to ${applied}/${windows.length} window(s) in "${name}"`,
   );
 }
 

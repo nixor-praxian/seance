@@ -178,6 +178,7 @@ seance windows --probe --assign # same table, then prompts for `<idx> <group> [s
 | `seance theme set <group> <pair-name>` | Assign a theme pair to a group. |
 | `seance theme apply <group>` | Paint the group's pair into each of its windows via OSC palette sequences. Resolves dark vs light via the current macOS appearance. |
 | `seance background <group> <color> [light]` | Per-group background override painted on top of the theme — survives `theme apply`/`use`. One color, or two (`<dark> <light>`) for an appearance-aware pair resolved like the theme. `none` clears. |
+| `seance appearance <dark\|light\|auto>` | Force theme resolution to a fixed appearance regardless of macOS, and repaint all groups. Use `dark` to match Claude Code's own fixed UI theme (otherwise its text can render invisibly on a mismatched terminal). `auto` follows the system. |
 
 ### Meta
 
@@ -352,6 +353,10 @@ Expected — that's the probe sentinel. Your shell or Claude Code will reset the
 ### `seance restore` spawns windows but they're not in the group
 
 Add `--rebind`: `seance restore <name> --rebind`. Without it, restore just runs the script; the new windows exist but seance doesn't track them.
+
+### Terminal text is invisible ("clear on clear")
+
+Claude Code renders with its **own** fixed theme (see `theme` in `~/.claude.json`) and uses *its* text color, not the terminal's. If Claude is dark (light text) while your terminal is on a light theme, that text vanishes on the light background — and vice-versa. No terminal theme fixes it, because Claude ignores the terminal's foreground. Match them: `seance appearance dark` (or `light`) pins every pane to Claude's appearance. seance controls only the terminal palette; it can't recolor Claude's UI.
 
 ### A pane "disappeared"
 

@@ -711,7 +711,7 @@ export async function run(argv: string[]): Promise<void> {
             const pair = getTheme(state, g.themeName);
             if (pair) {
               try {
-                const appearance = await ghostty.currentAppearance();
+                const appearance = state.appearance ?? (await ghostty.currentAppearance());
                 const themeName = resolveTheme(pair, appearance);
                 const palette = await parseThemeFile(themeFilePath(themeName));
                 const ttyWindows = g.windows.filter((w) => w.ttyPath);
@@ -841,7 +841,7 @@ export async function run(argv: string[]): Promise<void> {
       if (g.themeName) {
         await paintGroupTheme(state, group);
       } else if (!clear) {
-        const appearance = await ghostty.currentAppearance();
+        const appearance = state.appearance ?? (await ghostty.currentAppearance());
         const bg = light ? (appearance === "dark" ? color : light) : color;
         const windows = g.windows.filter((w) => w.ttyPath);
         for (const w of windows) {
@@ -881,6 +881,33 @@ export async function run(argv: string[]): Promise<void> {
       }
     });
 
+  // ── appearance ───────────────────────────────────────────────────
+  program
+    .command("appearance <mode>")
+    .description(
+      "Force theme appearance regardless of macOS: dark | light | auto (follow system). Repaints all themed groups. Use dark to match Claude Code's own fixed theme.",
+    )
+    .action(async (mode: string) => {
+      const m = mode.toLowerCase();
+      if (!["dark", "light", "auto"].includes(m)) {
+        throw new Error('appearance must be "dark", "light", or "auto"');
+      }
+      const state = await loadState();
+      if (m === "auto") delete state.appearance;
+      else state.appearance = m as "dark" | "light";
+      await saveState(state);
+      console.log(`appearance = ${m}`);
+      for (const name of Object.keys(state.groups)) {
+        if (state.groups[name]!.themeName) {
+          try {
+            await paintGroupTheme(state, name);
+          } catch (err) {
+            console.error(`  ${name}: ${(err as Error).message}`);
+          }
+        }
+      }
+    });
+
   // ── meta ─────────────────────────────────────────────────────────
   program
     .command("where")
@@ -909,7 +936,7 @@ async function paintGroupTheme(state: SeanceState, name: string): Promise<void> 
       `unknown theme pair "${g.themeName}". See "seance theme list-pairs".`,
     );
   }
-  const appearance = await ghostty.currentAppearance();
+  const appearance = state.appearance ?? (await ghostty.currentAppearance());
   const themeName = resolveTheme(pair, appearance);
   const palette = await parseThemeFile(themeFilePath(themeName)).catch((err: Error) => {
     throw new Error(`failed to load Ghostty theme "${themeName}": ${err.message}`);

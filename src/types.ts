@@ -71,4 +71,10 @@ export interface SeanceState {
   themes: Record<string, ThemePair>;
   /** Last group that was used / arranged / themed. Drives default-group lookups. */
   activeGroup?: string;
+  /**
+   * Force theme resolution to a fixed appearance, overriding macOS. Absent =
+   * follow the system. Useful because Claude Code renders with its own fixed
+   * theme, so terminals must match it rather than the OS.
+   */
+  appearance?: "dark" | "light";
 }

@@ -1,9 +1,20 @@
 import { Command } from "commander";
 import { promises as fs } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
-import { loadState, saveState, savesDir, statePath } from "./state.js";
+import { ensurePolicy, loadState, saveState, savesDir, statePath } from "./state.js";
+import {
+  assignThemes,
+  autoGrid,
+  computeRoles,
+  placePanes,
+  repoOf,
+  type IdentityEntry,
+  type LivePane,
+  type PolicyScreen,
+} from "./policy.js";
 import { buildSaveScript } from "./save.js";
 import {
   addWindow,
@@ -28,6 +39,8 @@ import {
   registerTheme,
   resolveTheme,
   themeFilePath,
+  type Appearance,
+  type ThemePalette,
 } from "./themes.js";
 import type { LayoutSpec, Rect, SeanceState, WindowRef } from "./types.js";
 
@@ -217,13 +230,18 @@ export async function run(argv: string[]): Promise<void> {
             `no slotted+TTY-tagged windows in "${name}". Re-add with "seance group add ${name} --slot N" from each window.`,
           );
         }
-        await ghostty.setWindowBounds(plans);
+        const res = await ghostty.setWindowBounds(plans);
 
         setGroupLayout(state, name, layout);
         setGroupDisplay(state, name, target.displayId);
         setActiveGroup(state, name);
         await saveState(state);
-        console.log(`arranged ${plans.length} window(s) in "${name}" on display ${target.index}`);
+        console.log(`arranged ${res.placed.length} window(s) in "${name}" on display ${target.index}`);
+        if (res.stranded.length > 0) {
+          console.log(
+            `stranded (unreachable on this Space): ${res.stranded.map((t) => t.replace(/^\/dev\//, "")).join(", ")}`,
+          );
+        }
       },
     );
 
@@ -908,6 +926,116 @@ export async function run(argv: string[]): Promise<void> {
       }
     });
 
+  // ── organize (seance 2.0: perception + policy, docs/vision.md) ───
+  program
+    .command("organize")
+    .description(
+      "Perceive every live pane, derive repo identity, place by policy, tile, and paint. Idempotent.",
+    )
+    .action(async () => {
+      await runOrganize();
+    });
+
+  // ── focus ────────────────────────────────────────────────────────
+  program
+    .command("focus <repo>")
+    .description("Raise and focus the first live pane of a repo.")
+    .action(async (repo: string) => {
+      const { live } = await perceiveWorld();
+      const target = live.find((p) => p.repo === repo);
+      if (!target) {
+        const repos = [...new Set(live.map((p) => p.repo))].sort().join(", ");
+        throw new Error(`no live pane for "${repo}". Live repos: ${repos || "none"}`);
+      }
+      await ghostty.focusTty(target.ttyPath, target.repo);
+      console.log(`focused ${repo} (${target.ttyPath.replace(/^\/dev\//, "")})`);
+    });
+
+  // ── json (Alfred Script Filter protocol) ─────────────────────────
+  program
+    .command("json <verb> [query]")
+    .description('Machine-readable surface. "json query <q>" prints Alfred Script Filter items.')
+    .action(async (verb: string, query: string | undefined) => {
+      if (verb !== "query") throw new Error(`unknown json verb "${verb}" — only "query"`);
+      const q = (query ?? "").trim().toLowerCase();
+      const state = await loadState();
+      ensurePolicy(state);
+      const { live } = await perceiveWorld();
+      const byRepo = new Map<string, number>();
+      for (const p of live) byRepo.set(p.repo, (byRepo.get(p.repo) ?? 0) + 1);
+
+      const items: Array<{ uid: string; title: string; subtitle: string; arg: string }> = [
+        {
+          uid: "organize",
+          title: "Organize",
+          subtitle: `perceive → place → paint ${live.length} pane(s) across ${byRepo.size} repo(s)`,
+          arg: "organize",
+        },
+      ];
+      for (const [repo, n] of [...byRepo.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        const pair = state.identity?.[repo]?.pair;
+        items.push({
+          uid: `focus-${repo}`,
+          title: `Focus ${repo}`,
+          subtitle: `${n} pane(s)${pair ? ` — ${pair}` : ""}`,
+          arg: `focus ${repo}`,
+        });
+      }
+      for (const mode of ["dark", "light", "auto"] as const) {
+        items.push({
+          uid: `appearance-${mode}`,
+          title: `Appearance ${mode}`,
+          subtitle: "repaint all panes for this appearance",
+          arg: `appearance ${mode}`,
+        });
+      }
+      const filtered = q ? items.filter((i) => i.title.toLowerCase().includes(q)) : items;
+      console.log(JSON.stringify({ items: filtered }));
+    });
+
+  // ── watch (the daemon) ───────────────────────────────────────────
+  program
+    .command("watch")
+    .description(
+      "Watcher loop: auto-paint new panes with their repo identity; re-organize when the display set changes.",
+    )
+    .option("--install", "install + start as a launchd agent")
+    .option("--uninstall", "stop + remove the launchd agent")
+    .option("--interval <ms>", "poll interval", (v) => Number(v), 2000)
+    .action(async (opts: { install?: boolean; uninstall?: boolean; interval: number }) => {
+      if (opts.install) return installWatcher();
+      if (opts.uninstall) return uninstallWatcher();
+      await watchLoop(opts.interval);
+    });
+
+  // ── alfred ───────────────────────────────────────────────────────
+  program
+    .command("alfred <verb>")
+    .description('Alfred 5 workflow. "alfred install" copies it into your workflows directory.')
+    .action(async (verb: string) => {
+      if (verb !== "install") throw new Error(`unknown alfred verb "${verb}" — only "install"`);
+      const src = join(packageRoot(), "alfred", "seance-workflow");
+      await fs.access(src).catch(() => {
+        throw new Error(`workflow source missing at ${src}`);
+      });
+      const workflows = join(
+        homedir(),
+        "Library",
+        "Application Support",
+        "Alfred",
+        "Alfred.alfredpreferences",
+        "workflows",
+      );
+      await fs.access(workflows).catch(() => {
+        throw new Error(
+          `Alfred workflows directory not found at ${workflows} — is Alfred 5 installed (or using a sync folder)?`,
+        );
+      });
+      const dest = join(workflows, "com.seance.palette");
+      await fs.cp(src, dest, { recursive: true, force: true });
+      console.log(`installed → ${dest}\nType "s" in Alfred (⌥Space) to summon seance.`);
+    });
+
   // ── meta ─────────────────────────────────────────────────────────
   program
     .command("where")
@@ -923,6 +1051,245 @@ export async function run(argv: string[]): Promise<void> {
     console.error(`seance: ${friendlyError(msg)}`);
     process.exit(1);
   }
+}
+
+function packageRoot(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+interface WorldPane {
+  ttyPath: string;
+  repo: string;
+  cwd: string;
+  command: string;
+}
+
+async function perceiveWorld(): Promise<{ live: WorldPane[]; home: string }> {
+  const home = homedir();
+  const panes = await ghostty.perceivePanes();
+  return {
+    home,
+    live: panes.map((p) => ({
+      ttyPath: p.ttyPath,
+      cwd: p.cwd ?? home,
+      repo: repoOf(p.cwd ?? home, home),
+      command: p.command,
+    })),
+  };
+}
+
+function themeRing(state: SeanceState): string[] {
+  return listThemePairs(state)
+    .map((t) => t.name)
+    .filter((n) => n !== "Catppuccin");
+}
+
+function bgFor(entry: IdentityEntry, appearance: Appearance): string | undefined {
+  if (entry.bg == null) return undefined;
+  if (typeof entry.bg === "string") return entry.bg;
+  return appearance === "dark" ? entry.bg.dark : entry.bg.light;
+}
+
+async function paintPane(
+  state: SeanceState,
+  pane: WorldPane,
+  appearance: Appearance,
+  paletteCache: Map<string, ThemePalette>,
+): Promise<boolean> {
+  const entry = state.identity?.[pane.repo];
+  if (!entry) return false;
+  const pair = getTheme(state, entry.pair);
+  if (!pair) return false;
+  const themeName = resolveTheme(pair, appearance);
+  let palette = paletteCache.get(themeName);
+  if (!palette) {
+    try {
+      palette = await parseThemeFile(themeFilePath(themeName));
+    } catch {
+      return false;
+    }
+    paletteCache.set(themeName, palette);
+  }
+  try {
+    await ghostty.applyPaletteToTty(pane.ttyPath, palette);
+    const bg = bgFor(entry, appearance);
+    if (bg) await ghostty.applyBackgroundToTty(pane.ttyPath, bg);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runOrganize(): Promise<void> {
+  const state = await loadState();
+  ensurePolicy(state);
+  const { live, home } = await perceiveWorld();
+  if (live.length === 0) {
+    console.log("no live Ghostty panes to organize");
+    return;
+  }
+
+  const repos = [...new Set(live.map((p) => p.repo))];
+  const { identity, changes } = assignThemes(repos, state.identity ?? {}, themeRing(state));
+  state.identity = identity;
+
+  const screens = await ghostty.listScreens();
+  const policyScreens: PolicyScreen[] = screens.map((s) => ({
+    key: String(s.displayId),
+    rect: s.rect,
+    isMain: s.isMain,
+  }));
+  const roles = computeRoles(policyScreens);
+  const roleOf = new Map<string, string>();
+  for (const [role, s] of roles) roleOf.set(s.key, role);
+
+  const livePanes: LivePane[] = live.map((p) => ({
+    ttyPath: p.ttyPath,
+    cwd: p.cwd,
+    command: p.command,
+  }));
+  const byScreen = placePanes(livePanes, state.placement!, roles, home);
+  const repoByTty = new Map(live.map((p) => [p.ttyPath, p.repo]));
+
+  const plans: Array<{ ttyPath: string; rect: Rect; label?: string }> = [];
+  const summary: string[] = [];
+  for (const [key, panes] of byScreen) {
+    const screen = policyScreens.find((s) => s.key === key)!;
+    const grid = autoGrid(panes.length, screen.rect.width, state.layout!.minPaneWidth);
+    const rects = tile(screen.rect, grid);
+    panes.forEach((p, i) => {
+      plans.push({ ttyPath: p.ttyPath, rect: rects[i]!, label: repoByTty.get(p.ttyPath)! });
+    });
+    const repoCounts = new Map<string, number>();
+    for (const p of panes) {
+      const r = repoByTty.get(p.ttyPath)!;
+      repoCounts.set(r, (repoCounts.get(r) ?? 0) + 1);
+    }
+    const desc = [...repoCounts.entries()].map(([r, n]) => (n > 1 ? `${r}×${n}` : r)).join(", ");
+    summary.push(`  ${(roleOf.get(key) ?? key).padEnd(15)} ${`${grid.cols}x${grid.rows}`.padEnd(5)} ${desc}`);
+  }
+
+  await ghostty.activate();
+  const { placed, stranded } = await ghostty.setWindowBounds(plans);
+
+  const appearance = state.appearance ?? (await ghostty.currentAppearance());
+  const paletteCache = new Map<string, ThemePalette>();
+  let painted = 0;
+  for (const p of live) {
+    if (await paintPane(state, p, appearance, paletteCache)) painted++;
+  }
+
+  await saveState(state);
+
+  for (const c of changes) console.log(`theme ${c.reason === "new" ? "assigned" : "reassigned"}: ${c.repo} → ${c.pair}`);
+  console.log(`organized ${placed.length}/${live.length} pane(s), painted ${painted} (${appearance})`);
+  for (const line of summary) console.log(line);
+  if (stranded.length > 0) {
+    const cmds = await ghostty.foregroundCommandsByTty(stranded);
+    console.log("stranded on another Space (bring over via Mission Control, then re-run):");
+    for (const t of stranded) {
+      console.log(`  ${t.replace(/^\/dev\//, "")}  ${repoByTty.get(t) ?? "?"}  ${cmds.get(t) ?? ""}`);
+    }
+  }
+}
+
+const WATCHER_PLIST = "com.seance.watcher.plist";
+
+async function watchLoop(intervalMs: number): Promise<void> {
+  const paintedSig = new Map<string, string>();
+  const paletteCache = new Map<string, ThemePalette>();
+  let screensSig = "";
+  let tick = 0;
+  for (;;) {
+    try {
+      const state = await loadState();
+      ensurePolicy(state);
+      const { live } = await perceiveWorld();
+      const repos = [...new Set(live.map((p) => p.repo))];
+      const { identity, changes } = assignThemes(repos, state.identity ?? {}, themeRing(state));
+      if (changes.length > 0) {
+        state.identity = identity;
+        await saveState(state);
+        for (const c of changes) console.log(`watch: theme ${c.repo} → ${c.pair}`);
+      }
+      state.identity = identity;
+
+      const appearance = state.appearance ?? (await ghostty.currentAppearance());
+      for (const p of live) {
+        const entry = identity[p.repo];
+        if (!entry) continue;
+        const sig = `${entry.pair}|${JSON.stringify(entry.bg ?? null)}|${appearance}`;
+        if (paintedSig.get(p.ttyPath) === sig) continue;
+        if (await paintPane(state, p, appearance, paletteCache)) {
+          paintedSig.set(p.ttyPath, sig);
+          console.log(`watch: painted ${p.ttyPath.replace(/^\/dev\//, "")} (${p.repo} → ${entry.pair})`);
+        }
+      }
+      const liveTtys = new Set(live.map((p) => p.ttyPath));
+      for (const known of [...paintedSig.keys()]) {
+        if (!liveTtys.has(known)) paintedSig.delete(known);
+      }
+
+      if (tick % 5 === 0) {
+        const screens = await ghostty.listScreens();
+        const sig = screens
+          .map((s) => `${s.displayId}:${s.rect.x},${s.rect.y},${s.rect.width},${s.rect.height}`)
+          .sort()
+          .join("|");
+        if (screensSig && sig !== screensSig) {
+          console.log("watch: display set changed — reorganizing in 3s");
+          await new Promise((r) => setTimeout(r, 3000));
+          await runOrganize();
+          paintedSig.clear();
+        }
+        screensSig = sig;
+      }
+    } catch (err) {
+      console.error(`watch: ${(err as Error).message}`);
+    }
+    tick++;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+async function installWatcher(): Promise<void> {
+  const cliJs = join(packageRoot(), "dist", "cli.js");
+  await fs.access(cliJs).catch(() => {
+    throw new Error(`${cliJs} missing — run "npm run build" first`);
+  });
+  const logPath = join(homedir(), ".config", "seance", "watcher.log");
+  await fs.mkdir(dirname(logPath), { recursive: true });
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.seance.watcher</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${process.execPath}</string>
+    <string>${cliJs}</string>
+    <string>watch</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>${logPath}</string>
+  <key>StandardErrorPath</key><string>${logPath}</string>
+</dict>
+</plist>
+`;
+  const plistPath = join(homedir(), "Library", "LaunchAgents", WATCHER_PLIST);
+  await fs.mkdir(dirname(plistPath), { recursive: true });
+  await fs.writeFile(plistPath, plist, "utf8");
+  await ghostty.launchctl(["unload", plistPath]).catch(() => undefined);
+  await ghostty.launchctl(["load", plistPath]);
+  console.log(`watcher installed and running (${plistPath})\nlogs: ${logPath}`);
+}
+
+async function uninstallWatcher(): Promise<void> {
+  const plistPath = join(homedir(), "Library", "LaunchAgents", WATCHER_PLIST);
+  await ghostty.launchctl(["unload", plistPath]).catch(() => undefined);
+  await fs.rm(plistPath, { force: true });
+  console.log("watcher stopped and removed");
 }
 
 async function paintGroupTheme(state: SeanceState, name: string): Promise<void> {

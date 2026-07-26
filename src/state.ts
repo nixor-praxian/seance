@@ -46,6 +46,34 @@ export async function loadState(): Promise<SeanceState> {
   }
 }
 
+/**
+ * Fill in the seance 2.0 policy fields on first use. Identity is seeded from
+ * legacy repo-named groups (their themeName/background were per-repo choices);
+ * placement is seeded from the user's stated usual arrangement. Catppuccin is
+ * the user's global Ghostty default — the "unpainted" look — so it never
+ * enters the assignable ring (enforced by the caller building the ring).
+ */
+export function ensurePolicy(state: SeanceState): void {
+  if (!state.identity) {
+    const identity: NonNullable<SeanceState["identity"]> = {};
+    for (const [name, g] of Object.entries(state.groups)) {
+      if (!g.themeName || g.themeName === "Catppuccin") continue;
+      identity[name] = {
+        pair: g.themeName,
+        ...(g.background != null ? { bg: g.background } : {}),
+        ...(name === "meshuga" ? { pinned: true } : {}),
+      };
+    }
+    state.identity = identity;
+  }
+  state.placement ??= [
+    { repo: "meshuga", role: "external.left" },
+    { repo: "zeus", role: "external.right" },
+    { repo: "*", role: "main" },
+  ];
+  state.layout ??= { minPaneWidth: 384 };
+}
+
 export async function saveState(state: SeanceState): Promise<void> {
   await fs.mkdir(dirname(STATE_FILE), { recursive: true });
   const tmp = `${STATE_FILE}.${process.pid}.tmp`;

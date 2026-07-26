@@ -69,6 +69,14 @@ export interface SeanceState {
   groups: Record<string, Group>;
   projects: Record<string, ProjectConfig>;
   themes: Record<string, ThemePair>;
+  /**
+   * seance 2.0 policy (see docs/vision.md): the only state that should
+   * persist long-term. Repo identity, placement rules on display roles,
+   * and layout parameters — never TTYs, display ids, or coordinates.
+   */
+  identity?: Record<string, import("./policy.js").IdentityEntry>;
+  placement?: import("./policy.js").PlacementRule[];
+  layout?: { minPaneWidth: number };
   /** Last group that was used / arranged / themed. Drives default-group lookups. */
   activeGroup?: string;
   /**

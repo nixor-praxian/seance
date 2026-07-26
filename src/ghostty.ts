@@ -156,8 +156,8 @@ export async function currentTty(): Promise<string | undefined> {
  */
 export async function setWindowBounds(
   plans: Array<{ ttyPath: string; rect: Rect; label?: string }>,
-): Promise<void> {
-  if (plans.length === 0) return;
+): Promise<{ placed: string[]; stranded: string[] }> {
+  if (plans.length === 0) return { placed: [], stranded: [] };
 
   const stamp = Date.now().toString(36);
   const stamped = plans.map((p, i) => ({
@@ -165,59 +165,81 @@ export async function setWindowBounds(
     sentinel: `⎈seance:${stamp}:${i}`,
     rect: p.rect,
     label: p.label,
+    i,
   }));
 
-  await Promise.all(
-    stamped.map((s) => fs.writeFile(s.ttyPath, `\x1b]2;${s.sentinel}\x1b\\`, { flag: "a" })),
-  );
+  // Per-round, per-window resolution: brand remaining ttys (3× burst — Claude
+  // Code reasserts its own OSC 2 every few hundred ms, same race probeWindows
+  // fights), focus them onto the current Space, then capture ALL refs before
+  // applying ANY rect (invariant 2). Windows whose sentinel never resolves
+  // (stranded on another Space, or losing the title race 5 rounds straight)
+  // are reported, not fatal.
+  const MAX_ROUNDS = 5;
+  const placed: string[] = [];
+  let remaining = stamped;
 
-  // Give Ghostty time to process OSC sequences and propagate titles to AX.
-  await new Promise((r) => setTimeout(r, 200));
+  for (let round = 0; round < MAX_ROUNDS && remaining.length > 0; round++) {
+    await Promise.all(
+      remaining.map((s) =>
+        fs
+          .writeFile(s.ttyPath, `\x1b]2;${s.sentinel}\x1b\\`.repeat(3), { flag: "a" })
+          .catch(() => undefined),
+      ),
+    );
+    // Ghostty's AX title mirror lags the OSC write by a frame or two.
+    await new Promise((r) => setTimeout(r, 300));
 
-  // Migrate each target window to the current macOS Space via Ghostty's native
-  // `focus` action. Without this, AX position-set on a window that's on a
-  // different Space silently strands it: the on-screen position appears to
-  // change, but the next minimize+restore lands the window off-current-Space
-  // and it looks like it "disappeared". Focusing first guarantees AX is acting
-  // on a window that's actually on the current Space.
-  const focusScript = `
-    tell application id "${GHOSTTY_BUNDLE_ID}"
-      ${stamped
-        .map(
-          (s) =>
-            `try\n` +
-            `  focus (focused terminal of selected tab of (first window whose name ends with "${s.sentinel.replace(/"/g, '\\"')}"))\n` +
-            `end try`,
-        )
-        .join("\n      ")}
-    end tell
-  `;
-  await osascript(focusScript);
-  await new Promise((r) => setTimeout(r, 150));
-
-  const captures = stamped
-    .map(
-      (s, i) =>
-        `set w${i} to first window whose name ends with "${s.sentinel.replace(/"/g, '\\"')}"`,
-    )
-    .join("\n        ");
-  const applies = stamped
-    .map(
-      (s, i) =>
-        `set position of w${i} to {${s.rect.x}, ${s.rect.y}}\n        ` +
-        `set size of w${i} to {${s.rect.width}, ${s.rect.height}}`,
-    )
-    .join("\n        ");
-
-  const script = `
-    tell application "System Events"
-      tell process "${GHOSTTY_APP_NAME}"
-        ${captures}
-        ${applies}
+    // Migrate targets to the current macOS Space via Ghostty's native `focus`.
+    // Without this, AX position-set on an off-Space window silently strands it.
+    const focusScript = `
+      tell application id "${GHOSTTY_BUNDLE_ID}"
+        ${remaining
+          .map(
+            (s) =>
+              `try\n` +
+              `  focus (focused terminal of selected tab of (first window whose name ends with "${s.sentinel.replace(/"/g, '\\"')}"))\n` +
+              `end try`,
+          )
+          .join("\n        ")}
       end tell
-    end tell
-  `;
-  await osascript(script);
+    `;
+    await osascript(focusScript).catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 150));
+
+    const captures = remaining
+      .map(
+        (s, k) =>
+          `set w${k} to missing value\n        try\n          set w${k} to first window whose name ends with "${s.sentinel.replace(/"/g, '\\"')}"\n        end try`,
+      )
+      .join("\n        ");
+    const applies = remaining
+      .map(
+        (s, k) =>
+          `if w${k} is not missing value then\n          try\n            set position of w${k} to {${s.rect.x}, ${s.rect.y}}\n            set size of w${k} to {${s.rect.width}, ${s.rect.height}}\n            set ok to ok & "${s.i} "\n          end try\n        end if`,
+      )
+      .join("\n        ");
+    const script = `
+      tell application "System Events"
+        tell process "${GHOSTTY_APP_NAME}"
+          set ok to ""
+          ${captures}
+          ${applies}
+          return ok
+        end tell
+      end tell
+    `;
+    const okRaw = await osascript(script).catch(() => "");
+    const okIdx = new Set(
+      okRaw
+        .split(/\s+/)
+        .filter((s) => s.length > 0)
+        .map(Number),
+    );
+    for (const s of remaining) {
+      if (okIdx.has(s.i)) placed.push(s.ttyPath);
+    }
+    remaining = remaining.filter((s) => !okIdx.has(s.i));
+  }
 
   // Cleanup: undo the sentinel titles we wrote, so windows don't show
   // "⎈seance:..." in their title bars until their shell happens to reset it.
@@ -231,6 +253,81 @@ export async function setWindowBounds(
         .catch(() => undefined);
     }),
   );
+
+  return { placed, stranded: remaining.map((s) => s.ttyPath) };
+}
+
+export interface PerceivedPane {
+  ttyPath: string;
+  command: string;
+  cwd?: string;
+}
+
+/**
+ * Fast AX-free perception: every live Ghostty child TTY with its foreground
+ * command and cwd, via ps + lsof only (~50ms). This is the seance 2.0 world
+ * model — identity is derived from it at every act, never persisted
+ * (docs/vision.md). AX is only touched later, at act time.
+ */
+export async function perceivePanes(): Promise<PerceivedPane[]> {
+  const pid = await ghosttyPid();
+  if (pid === undefined) return [];
+
+  const { stdout: psOut } = await execa("ps", ["-axo", "pid,ppid,tty,command"]);
+  type Proc = { pid: number; ppid: number; tty: string; command: string };
+  const procs: Proc[] = [];
+  for (const line of psOut.split("\n").slice(1)) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/.exec(line);
+    if (!m) continue;
+    procs.push({ pid: Number(m[1]), ppid: Number(m[2]), tty: m[3]!, command: m[4]! });
+  }
+
+  const childTtys = new Set<string>();
+  for (const p of procs) if (p.ppid === pid && /^ttys\d+/.test(p.tty)) childTtys.add(p.tty);
+
+  const deepest = new Map<string, Proc>();
+  for (const p of procs) {
+    if (!childTtys.has(p.tty)) continue;
+    const cur = deepest.get(p.tty);
+    if (!cur || p.pid > cur.pid) deepest.set(p.tty, p);
+  }
+
+  const cwds = await cwdsForPids([...deepest.values()].map((p) => p.pid));
+
+  return [...childTtys].sort().map((tty) => {
+    const proc = deepest.get(tty)!;
+    const cwd = cwds.get(proc.pid);
+    return {
+      ttyPath: `/dev/${tty}`,
+      command: proc.command,
+      ...(cwd ? { cwd } : {}),
+    };
+  });
+}
+
+/**
+ * Focus the window owning a TTY (raise + keyboard focus), via the same
+ * sentinel-brand + Ghostty-native-focus trick setWindowBounds uses.
+ */
+export async function focusTty(ttyPath: string, label?: string): Promise<void> {
+  const sentinel = `⎈seance-focus:${Date.now().toString(36)}`;
+  await fs.writeFile(ttyPath, `\x1b]2;${sentinel}\x1b\\`.repeat(3), { flag: "a" });
+  await new Promise((r) => setTimeout(r, 300));
+  await activate();
+  await osascript(`
+    tell application id "${GHOSTTY_BUNDLE_ID}"
+      try
+        focus (focused terminal of selected tab of (first window whose name ends with "${sentinel}"))
+      end try
+    end tell
+  `).catch(() => undefined);
+  await fs
+    .writeFile(ttyPath, `\x1b]2;${label ?? ttyPath.replace(/^\/dev\//, "")}\x1b\\`, { flag: "a" })
+    .catch(() => undefined);
+}
+
+export async function launchctl(args: string[]): Promise<void> {
+  await execa("launchctl", args);
 }
 
 export interface ScreenInfo {

@@ -1,9 +1,8 @@
 # seance 2.0 — the summonable terminal workspace
 
-*2026-07-26. Direction set by Philippe: "next-generation Alfred on MEGA STEROIDS —
-a crossover between Alfred, a shortcut manager and Ghostty." The original
-binding-heavy CLI model is acknowledged as a mistake; this document is the
-reversal.*
+*2026-07-26. Direction: a crossover between a launcher, a shortcut manager,
+and Ghostty — summonable, self-maintaining. The original binding-heavy CLI
+model is acknowledged as a mistake; this document is the reversal.*
 
 ## The diagnosis
 

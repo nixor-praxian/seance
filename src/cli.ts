@@ -1120,7 +1120,26 @@ export async function run(argv: string[]): Promise<void> {
       });
       const dest = join(workflows, "com.seance.palette");
       await fs.cp(src, dest, { recursive: true, force: true });
-      console.log(`installed → ${dest}\nType "s" in Alfred (⌥Space) to summon seance.`);
+      // Alfred runs scripts under a sterile PATH; bake in the dir of the node
+      // that's running us (covers nvm/homebrew/system installs of `seance`).
+      const plistPath = join(dest, "info.plist");
+      const plist = await fs.readFile(plistPath, "utf8");
+      const path = [
+        dirname(process.execPath),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+      ]
+        .filter((p, i, a) => a.indexOf(p) === i)
+        .join(":");
+      await fs.writeFile(plistPath, plist.replace(/export PATH="[^"]*"/g, `export PATH="${path}"`), "utf8");
+      await ghostty
+        .osascript(`tell application id "com.runningwithcrayons.Alfred" to reload workflow "com.seance.palette"`)
+        .catch(() => undefined);
+      console.log(`installed → ${dest}\nType "s" in Alfred to summon seance.`);
     });
 
   // ── meta ─────────────────────────────────────────────────────────

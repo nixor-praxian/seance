@@ -1,7 +1,12 @@
 {
   "name": "seance",
-  "version": "0.0.1",
-  "description": "Summon and arrange Ghostty terminal panes into named groups, grids, and per-project themes.",
+  "version": "2.0.0",
+  "description": "Summonable workspace for Ghostty on macOS: auto-organize panes by repo, per-project colors, Alfred palette, self-healing watcher.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nixor-praxian/seance.git"
+  },
+  "keywords": ["ghostty", "macos", "window-management", "terminal", "alfred", "tiling"],
   "type": "module",
   "bin": {
     "seance": "./bin/seance.mjs"

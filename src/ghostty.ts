@@ -341,12 +341,17 @@ export async function launchctl(args: string[]): Promise<void> {
  */
 export async function spawnWindow(cwd: string, command?: string): Promise<void> {
   const q = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  // `surface configuration` is a RECORD-TYPE: pass a literal with only the
+  // fields you mean. Fields you omit keep Ghostty's defaults; materializing an
+  // empty record via `new surface configuration` yields an empty `command`,
+  // which makes the surface fail to initialize ("Oh, no.").
+  const fields = [
+    `initial working directory:${q(cwd)}`,
+    ...(command ? [`initial input:${q(command)} & linefeed`] : []),
+  ].join(", ");
   await osascript(`
     tell application id "${GHOSTTY_BUNDLE_ID}"
-      set cfg to new surface configuration
-      set initial working directory of cfg to ${q(cwd)}
-      ${command ? `set initial input of cfg to ${q(command)} & linefeed` : ""}
-      new window with configuration cfg
+      new window with configuration {${fields}}
     end tell
   `);
 }

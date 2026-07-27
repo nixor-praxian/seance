@@ -330,6 +330,27 @@ export async function launchctl(args: string[]): Promise<void> {
   await execa("launchctl", args);
 }
 
+/**
+ * Spawn a fresh window in the RUNNING Ghostty instance via its scripting
+ * dictionary (1.3+ surface configurations). `command` is typed into the new
+ * shell via `initial input`, so the pane survives the command exiting.
+ *
+ * Never use `open -na` here: it launches a SECOND Ghostty instance whose
+ * windows belong to a different pid — invisible to perceivePanes and
+ * unreachable by the AX scripts (which address one "Ghostty" process).
+ */
+export async function spawnWindow(cwd: string, command?: string): Promise<void> {
+  const q = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  await osascript(`
+    tell application id "${GHOSTTY_BUNDLE_ID}"
+      set cfg to new surface configuration
+      set initial working directory of cfg to ${q(cwd)}
+      ${command ? `set initial input of cfg to ${q(command)} & linefeed` : ""}
+      new window with configuration cfg
+    end tell
+  `);
+}
+
 export interface ScreenInfo {
   /**
    * 0-based index into NSScreen.screens. Convenient for `--screen <n>`, but

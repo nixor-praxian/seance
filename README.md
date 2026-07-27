@@ -118,6 +118,9 @@ Three layers, evaluated fresh on every run:
 | `seance focus <repo>` | Raise and focus the repo's first live pane. |
 | `seance screens` | List connected displays — index, stable id, size, position, role. |
 | `seance appearance <dark\|light\|auto>` | Pin theme resolution to an appearance (or follow macOS), repaint everything. |
+| `seance session save [name]` | Snapshot the workspace as a recipe: (repo, cwd, claude session uuid) per pane — resolved from `~/.claude/projects` transcripts, no window refs. Default name `latest`. |
+| `seance session restore [name]` | Respawn what's missing — `claude --resume <uuid>` panes and plain shells — inside the running Ghostty instance, skip what's already live, then organize. |
+| `seance session list` | Saved sessions with pane counts and age. |
 | `seance json query "<q>"` | Machine-readable palette items (Alfred Script Filter JSON). |
 | `seance watch` | Run the watcher loop in the foreground (see [The watcher](#the-watcher)). |
 | `seance watch --install` / `--uninstall` | Install/remove the launchd agent. |
@@ -146,6 +149,8 @@ Install once (`seance alfred install`), then type **`s `** in Alfred:
 | `s myapp 3x2 1` | Place myapp 3x2 on display 1 | tile + pin, like `seance place` |
 | `s myapp auto` | Place myapp auto | clear the grid pin |
 | `s dark` | Appearance dark | pin + repaint |
+| `s save` | Save session | snapshot the workspace as `latest` |
+| `s restore` | Restore latest — k panes | respawn missing panes, organize |
 
 Repo names prefix-match (`s mya 3x2` works). Results come from live perception on each keystroke — expect a brief "Summoning…" while `ps`/`lsof` run. If the keyword does nothing after an install, see [Troubleshooting](#troubleshooting).
 
@@ -163,7 +168,7 @@ Logs: `~/.config/seance/watcher.log`. Remove with `seance watch --uninstall`. Th
 
 The 1.x binding-based commands still exist and work: `group new/add/list/show/rm`, `grid <name> <NxM> [--cols] [--gap] [--padding] [--screen]`, `summon`, `gather`, `windows [--probe] [--assign]`, `init`, `save`/`restore [--rebind]`, `theme set/apply`, `background`, `use`. They operate on *stored* window references, which die with their shells and can be recycled onto other windows — the exact failure mode 2.0 was built to eliminate. Prefer `organize`/`place`; the legacy surface is scheduled for removal.
 
-One legacy piece remains genuinely useful: `seance save <group>` emits a self-contained AppleScript that respawns windows in their cwds at their rects — until Phase 4's repo-keyed sessions replace it.
+`seance session save/restore` supersedes the legacy `save`/`restore`: it captures *what was running* (including `claude --resume` uuids) rather than window rects, and respawns inside the running Ghostty instance via the scripting dictionary instead of `open -na` (which forks a second Ghostty instance — invisible to perception).
 
 ## State and file layout
 
@@ -309,8 +314,8 @@ Expected — targeting sentinels. Active shells restore their titles within mill
 ## Roadmap
 
 - **2.0** ✅ — perception over bindings: `organize`, `place`, `focus`, policy engine, Alfred palette, watcher daemon
-- **2.1** — Phase 4 of [`docs/vision.md`](docs/vision.md): direct hotkey chords (⌥1…⌥9 via Alfred), repo-keyed session save/restore that captures each pane's command (including `claude --resume <uuid>`) so a workspace survives reboots
-- **2.2** — legacy surface removal; workspaces (named multi-repo bundles)
+- **2.1** ✅ — repo-keyed sessions: `session save/restore` captures each pane's claude resume uuid, so a workspace survives reboots
+- **2.2** — direct hotkey chords (⌥1…⌥9 via Alfred); legacy surface removal; workspaces (named multi-repo bundles)
 
 ## License
 

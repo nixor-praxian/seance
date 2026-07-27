@@ -17,6 +17,8 @@ export type Role = "main" | "external.left" | "external.right";
 export interface PlacementRule {
   repo: string;
   role: Role;
+  /** Explicit grid pin (`seance place`). Absent = auto-grid from minPaneWidth. */
+  grid?: GridSpec;
 }
 
 export interface IdentityEntry {

@@ -1145,31 +1145,7 @@ export async function run(argv: string[]): Promise<void> {
       if (verb === "save") {
         const { live } = await perceiveWorld();
         if (live.length === 0) throw new Error("no live panes to save");
-        const claudeByCwd = new Map<string, WorldPane[]>();
-        for (const p of live) {
-          if (isClaudeCommand(p.command)) {
-            const arr = claudeByCwd.get(p.cwd) ?? [];
-            arr.push(p);
-            claudeByCwd.set(p.cwd, arr);
-          }
-        }
-        const uuidByTty = new Map<string, string>();
-        for (const [cwd, panes] of claudeByCwd) {
-          const uuids = await activeSessionUuids(cwd, panes.length);
-          panes.forEach((p, i) => {
-            const u = uuids[i];
-            if (u) uuidByTty.set(p.ttyPath, u);
-          });
-        }
-        const snapshot: SessionSnapshot = {
-          name,
-          savedAt: new Date().toISOString(),
-          panes: live.map((p) => ({
-            repo: p.repo,
-            cwd: p.cwd,
-            ...(uuidByTty.get(p.ttyPath) ? { resume: uuidByTty.get(p.ttyPath)! } : {}),
-          })),
-        };
+        const snapshot = await buildSnapshot(name, live);
         state.sessions = { ...(state.sessions ?? {}), [name]: snapshot };
         await saveState(state);
         const resumes = snapshot.panes.filter((p) => p.resume).length;
@@ -1180,10 +1156,11 @@ export async function run(argv: string[]): Promise<void> {
       }
 
       if (verb === "restore") {
-        const snapshot = state.sessions?.[name];
+        const wanted = nameArg ?? (state.sessions?.["latest"] ? "latest" : "auto");
+        const snapshot = state.sessions?.[wanted];
         if (!snapshot) {
           const known = Object.keys(state.sessions ?? {}).join(", ") || "none";
-          throw new Error(`no session "${name}". Saved: ${known}`);
+          throw new Error(`no session "${wanted}". Saved: ${known}`);
         }
         const { live } = await perceiveWorld();
         const liveCmds = live.map((p) => p.command).join("\n");
@@ -1230,7 +1207,7 @@ export async function run(argv: string[]): Promise<void> {
         }
 
         if (spawns.length === 0) {
-          console.log(`nothing to restore — all ${snapshot.panes.length} pane(s) of "${name}" are live`);
+          console.log(`nothing to restore — all ${snapshot.panes.length} pane(s) of "${wanted}" are live`);
           for (const s of skipped) console.log(`  = ${s}`);
           return;
         }
@@ -1333,6 +1310,34 @@ async function perceiveWorld(): Promise<{ live: WorldPane[]; home: string }> {
       cwd: p.cwd ?? home,
       repo: repoOf(p.cwd ?? home, home),
       command: p.command,
+    })),
+  };
+}
+
+async function buildSnapshot(name: string, live: WorldPane[]): Promise<SessionSnapshot> {
+  const claudeByCwd = new Map<string, WorldPane[]>();
+  for (const p of live) {
+    if (isClaudeCommand(p.command)) {
+      const arr = claudeByCwd.get(p.cwd) ?? [];
+      arr.push(p);
+      claudeByCwd.set(p.cwd, arr);
+    }
+  }
+  const uuidByTty = new Map<string, string>();
+  for (const [cwd, panes] of claudeByCwd) {
+    const uuids = await activeSessionUuids(cwd, panes.length);
+    panes.forEach((p, i) => {
+      const u = uuids[i];
+      if (u) uuidByTty.set(p.ttyPath, u);
+    });
+  }
+  return {
+    name,
+    savedAt: new Date().toISOString(),
+    panes: live.map((p) => ({
+      repo: p.repo,
+      cwd: p.cwd,
+      ...(uuidByTty.get(p.ttyPath) ? { resume: uuidByTty.get(p.ttyPath)! } : {}),
     })),
   };
 }
@@ -1492,6 +1497,14 @@ async function watchLoop(intervalMs: number): Promise<void> {
       const liveTtys = new Set(live.map((p) => p.ttyPath));
       for (const known of [...paintedSig.keys()]) {
         if (!liveTtys.has(known)) paintedSig.delete(known);
+      }
+
+      // Rolling auto-snapshot every ~5min, so restore works even if the user
+      // never typed `session save` — the crash/reboot recipe is always ≤5min old.
+      if (tick % 150 === 0 && live.length > 0) {
+        const snapshot = await buildSnapshot("auto", live);
+        state.sessions = { ...(state.sessions ?? {}), auto: snapshot };
+        await saveState(state);
       }
 
       if (tick % 5 === 0) {

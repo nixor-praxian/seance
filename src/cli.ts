@@ -11,6 +11,7 @@ import {
   computeRoles,
   placePanes,
   repoOf,
+  resolveRole,
   type IdentityEntry,
   type LivePane,
   type PolicyScreen,
@@ -936,6 +937,70 @@ export async function run(argv: string[]): Promise<void> {
       await runOrganize();
     });
 
+  // ── place (imperative override, recorded as policy) ──────────────
+  program
+    .command("place <repo> <grid>")
+    .description(
+      'Pin a repo\'s grid + display and tile it now: "seance place zeus 3x3 --screen 1". Grid "auto" clears the pin. Organize honours pins from then on.',
+    )
+    .option("--screen <n>", "target display index (see `seance screens`)", (v) => Number(v))
+    .action(async (repoArg: string, gridArg: string, opts: { screen?: number }) => {
+      const state = await loadState();
+      ensurePolicy(state);
+      const { live } = await perceiveWorld();
+      const panes = live.filter((p) => p.repo === repoArg);
+      if (panes.length === 0) {
+        const repos = [...new Set(live.map((p) => p.repo))].sort().join(", ");
+        throw new Error(`no live pane for "${repoArg}". Live repos: ${repos || "none"}`);
+      }
+
+      const screens = await ghostty.listScreens();
+      const policyScreens: PolicyScreen[] = screens.map((s) => ({
+        key: String(s.displayId),
+        rect: s.rect,
+        isMain: s.isMain,
+      }));
+      const roles = computeRoles(policyScreens);
+
+      let target: PolicyScreen;
+      if (opts.screen !== undefined) {
+        const s = policyScreens[opts.screen];
+        if (!s) {
+          throw new Error(`no display #${opts.screen} — see "seance screens"`);
+        }
+        target = s;
+      } else {
+        const existing = state.placement!.find((r) => r.repo === repoArg || r.repo === "*");
+        target = resolveRole(existing?.role ?? "main", roles);
+      }
+      const role = [...roles.entries()].find(([, s]) => s.key === target.key)?.[0] ?? "main";
+
+      const grid = gridArg.toLowerCase() === "auto" ? undefined : parseGrid(gridArg);
+      if (grid && panes.length > grid.cols * grid.rows) {
+        throw new Error(`${panes.length} ${repoArg} pane(s) won't fit ${grid.cols}x${grid.rows}`);
+      }
+
+      state.placement = [
+        { repo: repoArg, role, ...(grid ? { grid } : {}) },
+        ...state.placement!.filter((r) => r.repo !== repoArg),
+      ];
+
+      const g = grid ?? autoGrid(panes.length, target.rect.width, state.layout!.minPaneWidth);
+      const rects = tile(target.rect, g);
+      const plans = panes.map((p, i) => ({ ttyPath: p.ttyPath, rect: rects[i]!, label: p.repo }));
+      await ghostty.activate();
+      const { placed, stranded } = await ghostty.setWindowBounds(plans);
+      await saveState(state);
+
+      const screenIdx = screens.find((s) => String(s.displayId) === target.key)!.index;
+      console.log(
+        `placed ${placed.length}/${panes.length} ${repoArg} pane(s) as ${g.cols}x${g.rows} on display ${screenIdx} (${role})${grid ? " — pinned" : " — pin cleared"}`,
+      );
+      if (stranded.length > 0) {
+        console.log(`stranded: ${stranded.map((t) => t.replace(/^\/dev\//, "")).join(", ")}`);
+      }
+    });
+
   // ── focus ────────────────────────────────────────────────────────
   program
     .command("focus <repo>")
@@ -990,6 +1055,28 @@ export async function run(argv: string[]): Promise<void> {
         });
       }
       const filtered = q ? items.filter((i) => i.title.toLowerCase().includes(q)) : items;
+
+      // "<repo> <grid> [display]" grammar: "zeus 3x3 1", "zeus 3x3 display 1",
+      // "zeus auto". Matches by repo prefix so "zeu 3x3 1" works too.
+      const m = /^(\S+)\s+(\d+\s*x\s*\d+|auto)(?:\s+(?:display\s*|d)?(\d+))?$/i.exec(
+        (query ?? "").trim(),
+      );
+      if (m) {
+        const repo = [...byRepo.keys()].find((r) => r.startsWith(m[1]!.toLowerCase()));
+        if (repo) {
+          const gridStr = m[2]!.replace(/\s/g, "").toLowerCase();
+          const screenPart = m[3] !== undefined ? ` --screen ${m[3]}` : "";
+          filtered.unshift({
+            uid: "place",
+            title: `Place ${repo} ${gridStr}${m[3] !== undefined ? ` on display ${m[3]}` : ""}`,
+            subtitle:
+              gridStr === "auto"
+                ? "clear the grid pin, back to auto-grid"
+                : "pin grid + display as policy, tile now",
+            arg: `place ${repo} ${gridStr}${screenPart}`,
+          });
+        }
+      }
       console.log(JSON.stringify({ items: filtered }));
     });
 
@@ -1155,7 +1242,12 @@ async function runOrganize(): Promise<void> {
   const summary: string[] = [];
   for (const [key, panes] of byScreen) {
     const screen = policyScreens.find((s) => s.key === key)!;
-    const grid = autoGrid(panes.length, screen.rect.width, state.layout!.minPaneWidth);
+    const reposOn = new Set(panes.map((p) => repoByTty.get(p.ttyPath)!));
+    const pinned = state.placement!.find((r) => r.grid && reposOn.has(r.repo))?.grid;
+    const grid =
+      pinned && panes.length <= pinned.cols * pinned.rows
+        ? pinned
+        : autoGrid(panes.length, screen.rect.width, state.layout!.minPaneWidth);
     const rects = tile(screen.rect, grid);
     panes.forEach((p, i) => {
       plans.push({ ttyPath: p.ttyPath, rect: rects[i]!, label: repoByTty.get(p.ttyPath)! });

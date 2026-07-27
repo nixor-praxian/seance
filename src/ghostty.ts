@@ -708,8 +708,10 @@ async function cwdsForPids(pids: number[]): Promise<Map<number, string>> {
   const out = new Map<number, string>();
   if (pids.length === 0) return out;
   try {
+    // Absolute path: /usr/sbin is missing from sterile PATHs (Alfred, launchd
+    // variants) and a silent lsof miss collapses every repo to "home".
     const { stdout } = await execa(
-      "lsof",
+      "/usr/sbin/lsof",
       ["-a", "-d", "cwd", "-Fn", "-p", pids.join(",")],
       { reject: false },
     );

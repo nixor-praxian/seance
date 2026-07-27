@@ -1,33 +1,38 @@
 # seance
 
-> A gathering of ghosts. Summon and arrange [Ghostty](https://ghostty.org) terminal windows into named groups, tile them into screen-proportional grids, and dress each group in its own per-window color palette — all from one CLI.
+> A gathering of ghosts. A summonable workspace for [Ghostty](https://ghostty.org) on macOS: panes auto-organize by repo, every project wears its own colors, an Alfred palette drives it all, and a background watcher keeps it true — across one display or three.
 
-`seance` is a macOS-only command-line tool for working with multiple Ghostty windows as a coherent unit. Where Ghostty's built-ins handle splits, tabs, and themes per app, seance adds a layer above: named groups of *separate* top-level windows, deterministic grids on demand, save-and-restore of entire window layouts, and per-window theme application that lets two groups sit on screen at the same time with visibly different palettes.
+Run one command — `seance organize` — and every Ghostty window is identified by the repo it's working in, placed on the right display, tiled into a sensible grid, and painted with that repo's color palette. Open a new pane in a new repo and it gets its own distinct theme within seconds, automatically. Unplug your externals and everything reflows to the laptop. Nothing to register, nothing to name, nothing that goes stale.
 
 ## Key features
 
-- **Groups** — name a set of Ghostty windows (`seance group add dev --slot 1`); a group survives the rest of the session as a first-class object.
-- **Grids** — `seance grid dev 2x2` lays out the group as four equal panes, or `--cols 1,3` for custom column weights.
-- **Multi-display** — `seance screens` lists every connected display; `seance grid dev 2x2 --screen 1` tiles a group onto a specific monitor, remembered per-group by a stable display id so `summon` puts it back there.
-- **Self-healing layout** — `seance gather dev` re-tiles the windows it can reach and names the ones that drifted onto another macOS Space (with the command to recover each), instead of silently leaving them.
-- **Save / restore** — `seance save dev` emits a self-contained, human-readable AppleScript that spawns the same windows in the same cwds at the same rects, days later, in any state.
-- **Per-window theming** — `seance theme apply dev` paints the group's theme into each window via OSC palette sequences, so different on-screen groups can run different palettes simultaneously.
-- **Central inspection** — `seance windows --probe --assign` enumerates every Ghostty window with its tty, foreground command, cwd, and current group assignment, then assigns them to groups interactively.
-- **Light/dark aware** — themes are stored as `{ dark, light }` pairs; the active variant follows macOS appearance automatically.
+- **Perception, not bookkeeping** — a pane's identity is derived live from its working directory (`repo = basename(cwd)`), rediscovered at every command. There are no groups to maintain and no saved window references to rot.
+- **One verb** — `seance organize` perceives → colors → places → tiles → paints. Idempotent; safe to run any time, from the CLI, Alfred, or the watcher.
+- **Colors per project** — each repo is assigned a theme pair from a curated ring, collision-free among live repos, sticky across days. Applied per *window* via OSC sequences, so five repos can sit side by side in five palettes.
+- **Policy, not coordinates** — displays are addressed by *role* (`main`, `external.left`, `external.right`), computed from live geometry at each run. Layouts derive from one number (`minPaneWidth`). One screen or three, docked or nomad: same rules, correct result.
+- **Imperative override that sticks** — `seance place zeus 3x3 --screen 1` tiles now *and* records the choice as policy, so every future organize honours it. `place zeus auto` clears it.
+- **Alfred palette** — type `s` in Alfred: Organize, Focus any repo, or the grid grammar (`s zeus 3x3 1`). Results are generated from live perception on each keystroke.
+- **Watcher daemon** — a launchd agent that paints new panes with their repo's colors within ~2s and re-organizes when the display set changes. Never re-tiles spontaneously otherwise.
+- **Space-aware** — windows stranded on another macOS Space (the classic external-display-disconnect failure) are reported with their foreground command instead of silently skipped — and still get painted, since OSC crosses Spaces even when Accessibility can't.
+- **Light/dark aware** — themes are `{ dark, light }` pairs; resolution follows macOS appearance, or pin it with `seance appearance dark`.
 
 ## Why it exists
 
-Ghostty 1.3+ ships an AppleScript dictionary, but it deliberately doesn't expose the things you need to orchestrate windows from outside: no `position`/`size` properties, no per-window theme switch, no API for "make these four windows a 2×2 grid right now." Seance fills that gap by treating *named multi-window groups* as the primary object — and adds save/restore and per-window theming on top.
+Ghostty's AppleScript dictionary deliberately doesn't expose what window orchestration needs: no `position`/`size`, no per-window theming, no "make these a grid." seance built that layer — and then learned the harder lesson: **stored window references rot by design.** TTYs die and get recycled onto other repos' windows; display IDs re-enumerate on reconnect; manually-registered groups decay into pointers at the wrong panes. seance 2.0 inverts the model: identity is *perceived* (`ps` + `lsof` → tty → cwd → repo) at every act and never persisted. The only long-term state is policy — which colors, which rules, one layout number. Policy can't go stale. (The full design rationale lives in [`docs/vision.md`](docs/vision.md).)
 
 ## Table of contents
 
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Quickstart](#quickstart)
+- [How it decides (the model)](#how-it-decides-the-model)
 - [Command reference](#command-reference)
-- [Architecture](#architecture)
+- [The Alfred palette](#the-alfred-palette)
+- [The watcher](#the-watcher)
+- [Legacy commands (v1)](#legacy-commands-v1)
 - [State and file layout](#state-and-file-layout)
 - [Environment variables](#environment-variables)
+- [Architecture](#architecture)
 - [Development](#development)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
@@ -37,250 +42,156 @@ Ghostty 1.3+ ships an AppleScript dictionary, but it deliberately doesn't expose
 ## Prerequisites
 
 - **macOS** — seance shells out to `osascript` and reads macOS-only paths. Linux/Windows are not supported.
-- **Ghostty 1.3 or newer** — older versions don't expose the AppleScript dictionary seance needs (`id of window`, `perform action`, etc.). Get it from <https://ghostty.org>.
-- **Node.js 18 or newer** — uses ESM, `node:fs/promises`, and other modern features. The bin shim is `#!/usr/bin/env node`.
-- **Accessibility permission for Ghostty (and your terminal multiplexer/IDE that launches seance)** — seance moves windows via System Events, which requires Accessibility access. Grant it under **System Settings → Privacy & Security → Accessibility**. macOS will prompt the first time you run a `grid` or `summon` command.
-- **A `ghostty` CLI on `PATH`** (optional but recommended) — `seance theme list` shells out to `ghostty +list-themes`. Without it, theme listing won't work, but everything else will.
+- **Ghostty 1.3 or newer** — from <https://ghostty.org>.
+- **Node.js 18 or newer**.
+- **Accessibility permission** — seance moves windows via System Events. Grant it to the terminal you run seance from (and let the prompt through the first time the watcher reorganizes) under **System Settings → Privacy & Security → Accessibility**.
+- **Alfred 5** (optional) — for the palette front-end. Everything works from the CLI without it.
+- **A `ghostty` CLI on `PATH`** (optional) — only `seance theme list` needs it.
 
 ## Installation
-
-### Option 1 — global install from a local clone (recommended for now)
-
-```bash
-git clone https://github.com/nixor-praxian/seance.git
-cd seance
-npm install
-npm link              # creates a global `seance` symlink pointing at this checkout
-seance --version      # → 0.0.1
-```
-
-`npm link` is the recommended path while seance is pre-release: your edits apply live to the global binary, no rebuild-and-reinstall cycle. To remove later: `npm unlink -g seance`.
-
-### Option 2 — local-only (no global binary)
 
 ```bash
 git clone https://github.com/nixor-praxian/seance.git
 cd seance
 npm install
 npm run build
-./bin/seance.mjs --version
+npm link              # global `seance` symlink pointing at this checkout
+seance --version      # → 2.0.0
 ```
 
-### Option 3 — run from source (no build step)
+Then, optionally:
 
 ```bash
-npm install
-npm run dev -- group list      # equivalent to `seance group list`
+seance alfred install   # install the Alfred workflow (keyword: s)
+seance watch --install  # install + start the launchd watcher
 ```
 
-The `dev` script wraps `tsx src/cli.ts`.
+To remove later: `seance watch --uninstall`, `npm unlink -g seance`, and delete the workflow from Alfred.
 
 ## Quickstart
 
-### One-shot wizard (recommended)
+Open a few Ghostty windows in different project directories. Then:
 
 ```bash
-seance init dev
+seance organize
 ```
 
-Opens an interactive flow: lists every Ghostty window with its tty/cmd/cwd, asks which to put in the group and in what order, asks for a theme pair, asks for a grid layout (default is the nearest-square for the picked count), then applies everything in one shot. From zero state to fully-arranged + themed group in a single command.
+```
+theme assigned: myapp → Rose Pine
+theme assigned: infra → Gruvbox Material
+organized 5/5 pane(s), painted 5 (dark)
+  main            3x1   myapp×2, infra
+  external.left   2x1   docs, scratch
+```
 
-### Manual setup
+That's the whole workflow. Each repo got a distinct palette (sticky — same colors tomorrow), panes were tiled by display, and re-running any time is safe. Want a specific shape for one repo?
 
 ```bash
-# 1. Open four Ghostty windows (cmd+N four times).
-# 2. In each window, run one of these — the slot number determines its grid cell:
-seance group add dev --slot 1   # top-left
-seance group add dev --slot 2   # top-right
-seance group add dev --slot 3   # bottom-left
-seance group add dev --slot 4   # bottom-right
-
-# 3. From any window, tile them:
-seance grid dev 2x2
+seance place myapp 2x2 --screen 1   # tile myapp 2x2 on display 1, and remember that
+seance place myapp auto             # forget it, back to auto-grid
 ```
 
-Give the group a theme:
+With the watcher installed you generally never type anything again: new panes are painted as they appear, and display changes trigger a re-organize.
 
-```bash
-seance theme set dev "Rose Pine"
-seance theme apply dev          # all 4 windows recolor in place
-```
+## How it decides (the model)
 
-Save it for later:
+Three layers, evaluated fresh on every run:
 
-```bash
-seance save dev                 # writes ~/.config/seance/saves/dev.applescript
-cat ~/.config/seance/saves/dev.applescript    # inspect, edit, share
-osascript ~/.config/seance/saves/dev.applescript    # restore on a fresh Mac with no seance installed
-# or:
-seance restore dev --rebind     # restore via seance and re-bind to the group
-```
+**1. Perception.** `ps` finds every Ghostty child TTY; `lsof` resolves each foreground process's cwd; `repo = basename(cwd)` (home directory → `home`). No Accessibility calls, ~50ms. Windows are only touched later, at act time, via the sentinel technique described under [Architecture](#architecture).
 
-Inspect what Ghostty currently has open:
+**2. Policy** — the only persisted state:
 
-```bash
-seance windows --probe          # table with ghostty id, tty, foreground cmd, cwd, group
-seance windows --probe --assign # same table, then prompts for `<idx> <group> [slot]` lines
-```
+- **Identity** (`repo → theme pair`): assigned from a ring of curated pairs the first time a repo is seen, then sticky. Assignment prefers globally-unused pairs, guarantees no two *live* repos share one, and excludes **Catppuccin** — a common global Ghostty default, i.e. what an unpainted window already looks like. Manual pins (`"pinned": true`) always win.
+- **Placement rules** (`repo → display role [+ grid]`): ordered, first match wins, `"*"` wildcard, default `* → main`. Roles are computed from live geometry each run: `main` is the focused display; externals sorted by x become `external.left` / `external.right`. A rule pointing at a missing role degrades gracefully (other external, then main) — so a three-display policy is still correct on a laptop in a café.
+- **Layout** (`minPaneWidth`, default 384px): a display with n panes gets `cols = min(n, ⌊width / 384⌋)` columns, rows to fit. That one number yields 5×1 on a 1920 external, 4×2 for eight panes on a 16″ MacBook — and a `place` pin overrides it per repo (ignored automatically if the repo outgrows the pinned grid).
+
+**3. Actuation.** All target windows are branded via their TTYs, captured as AX references *first*, then moved in one batch; palettes are written per-window as OSC sequences. Failures are per-window, reported, and never abort the batch.
 
 ## Command reference
 
-### Wizard
+### seance 2.0
 
 | Command | Description |
 |---|---|
-| `seance init [name]` | Interactive flow: pick windows from a probed table, pick a theme pair, pick a layout, apply everything. `--no-theme` and `--no-grid` to opt out of either step. |
+| `seance organize` | Perceive every live pane, derive repo identity, assign colors, place by policy, tile, paint. Idempotent. |
+| `seance place <repo> <NxM> [--screen n]` | Tile the repo's panes now **and** pin `{display role, grid}` as its placement rule. `place <repo> auto` clears the grid pin. |
+| `seance focus <repo>` | Raise and focus the repo's first live pane. |
+| `seance screens` | List connected displays — index, stable id, size, position, role. |
+| `seance appearance <dark\|light\|auto>` | Pin theme resolution to an appearance (or follow macOS), repaint everything. |
+| `seance json query "<q>"` | Machine-readable palette items (Alfred Script Filter JSON). |
+| `seance watch` | Run the watcher loop in the foreground (see [The watcher](#the-watcher)). |
+| `seance watch --install` / `--uninstall` | Install/remove the launchd agent. |
+| `seance alfred install` | Install the Alfred workflow, baking in the correct PATH for your node install. |
+| `seance where` | Print the state file path. |
 
-### Groups
-
-| Command | Description |
-|---|---|
-| `seance group new <name>` | Create an empty group. |
-| `seance group add <name> [--slot N]` | Add the *current* shell's Ghostty window to `<name>` at slot `N` (1-indexed, row-major). Slot defaults to the next free integer. |
-| `seance group list` | List all groups with their window counts, current layout, and theme. |
-| `seance group show <name>` | Show each window in the group with its slot, ghostty id, tty path, and title. |
-| `seance group rm <name>` | Delete a group. |
-
-### Layout
-
-| Command | Description |
-|---|---|
-| `seance grid <name> <NxM>` | Tile the group as N columns × M rows of equal cells. |
-| `seance grid <name> --cols 1,3 [--rows N]` | Custom column weights — `1,3` makes column 1 take 25% and column 2 take 75%. |
-| `seance grid <name> [...] --screen <n>` | Tile onto display `<n>` (see `seance screens`). The choice is saved per-group as a stable display id; falls back to main with a notice if that monitor is unplugged. |
-| `seance grid <name> [...] --gap 8 --padding 12` | Add pixel gap between tiles / outer padding from the screen edge. |
-| `seance summon <name>` | Activate Ghostty and re-apply the group's last-used layout, on its saved display. |
-| `seance gather <name>` | Re-tile the windows reachable on the current Space; report any stranded on another Space (with how to recover them). |
-| `seance screens` | List connected displays — index, stable id, size, position, role — for use with `grid --screen`. |
-
-### Save / restore
+### Identity and appearance
 
 | Command | Description |
 |---|---|
-| `seance save <name> [path]` | Emit a self-contained AppleScript that recreates the group's windows fresh: spawns N new Ghostty windows in the saved cwds and positions each at the saved rect. Defaults to `~/.config/seance/saves/<name>.applescript`. |
-| `seance restore <name> [--rebind]` | Run the saved AppleScript via `osascript`. With `--rebind`, snapshot ghostty window ids before/after, re-probe TTYs, and update the group's bindings to point at the newly spawned windows. |
+| `seance theme list-pairs` | Registered theme pairs (name → dark/light variant). |
+| `seance theme register <name> --dark <X> --light <Y>` | Add or overwrite a pair (grows the assignment ring). |
+| `seance theme list` | Every theme Ghostty ships (via `ghostty +list-themes`). |
 
-### Windows (central inspection)
+To hand-pick a repo's colors, edit `identity` in the state file (see below) or pre-assign with the legacy `theme set` on a group named after the repo — `organize` migrates repo-named group themes into identity on first run.
 
-| Command | Description |
-|---|---|
-| `seance windows` | Plain list of every Ghostty window: AX index, state (position/size or `min`), title. |
-| `seance windows --probe` | Adds Ghostty id, TTY path, current `GROUP:SLOT` if assigned, and foreground command (via `ps` against the tty). |
-| `seance windows --probe --assign` | Same table, then prompts `<idx> <group> [slot]` lines on stdin — blank line to commit. Auto-creates groups if needed, auto-assigns next free slot if omitted. |
+## The Alfred palette
 
-### Themes
+Install once (`seance alfred install`), then type **`s `** in Alfred:
 
-| Command | Description |
-|---|---|
-| `seance theme list-pairs` | List registered theme *pairs* (name → dark / light). Seven curated pairs are seeded on first load. |
-| `seance theme list` | List every Ghostty theme name available (shells out to `ghostty +list-themes`). |
-| `seance theme register <name> --dark <X> --light <Y>` | Register or overwrite a pair. |
-| `seance theme set <group> <pair-name>` | Assign a theme pair to a group. |
-| `seance theme apply <group>` | Paint the group's pair into each of its windows via OSC palette sequences. Resolves dark vs light via the current macOS appearance. |
-| `seance background <group> <color> [light]` | Per-group background override painted on top of the theme — survives `theme apply`/`use`. One color, or two (`<dark> <light>`) for an appearance-aware pair resolved like the theme. `none` clears. |
-| `seance appearance <dark\|light\|auto>` | Force theme resolution to a fixed appearance regardless of macOS, and repaint all groups. Use `dark` to match Claude Code's own fixed UI theme (otherwise its text can render invisibly on a mismatched terminal). `auto` follows the system. |
+| You type | Item | Enter does |
+|---|---|---|
+| `s` | full menu | — |
+| `s org` | Organize | full perceive → place → paint |
+| `s myapp` | Focus myapp | raise + focus that repo |
+| `s myapp 3x2 1` | Place myapp 3x2 on display 1 | tile + pin, like `seance place` |
+| `s myapp auto` | Place myapp auto | clear the grid pin |
+| `s dark` | Appearance dark | pin + repaint |
 
-### Meta
+Repo names prefix-match (`s mya 3x2` works). Results come from live perception on each keystroke — expect a brief "Summoning…" while `ps`/`lsof` run. If the keyword does nothing after an install, see [Troubleshooting](#troubleshooting).
 
-| Command | Description |
-|---|---|
-| `seance where` | Print the absolute path to seance's state file. |
-| `seance --version` | Print version. |
-| `seance --help`, `seance <cmd> --help` | Built-in help. |
+## The watcher
 
-## Architecture
+`seance watch --install` writes `~/Library/LaunchAgents/com.seance.watcher.plist` and starts it. The loop, every 2s:
 
-### Module layout
+- **New pane?** Assign its repo a theme if it's a new repo, and paint it. This is the "colors just happen" experience.
+- **Display set changed?** (checked every 10s, debounced 3s) — run a full organize, so plugging in at your desk reflows the workspace.
+- **Never** re-tiles outside those events — it won't yank windows around while you work.
 
-```
-src/
-├── cli.ts          commander entry; subcommand wiring; self-invoke guard for `tsx`
-├── layouts.ts      pure rect math: (screen, NxM) → rect[]
-├── groups.ts       group CRUD over the state object
-├── state.ts        JSON persistence at $SEANCE_HOME/state.json; seeds builtin themes
-├── themes.ts       theme pair registry + Ghostty theme file parser + builtin 7 pairs
-├── save.ts         emits restore-time AppleScript
-├── ghostty.ts      osascript / JXA / TTY bridge (the only macOS-bound module)
-└── types.ts        Rect, Group, WindowRef, ThemePair, SeanceState
-```
+Logs: `~/.config/seance/watcher.log`. Remove with `seance watch --uninstall`. The watcher runs the *built* CLI (`dist/cli.js`), so re-run `npm run build` after changing source (then `seance watch --uninstall && seance watch --install` to restart it).
 
-`layouts.ts`, `groups.ts`, `state.ts`, `themes.ts`, and `save.ts` are pure TypeScript and testable on Linux. `ghostty.ts` is the only module that shells out to `osascript` or writes to TTYs. The CLI composes them.
+## Legacy commands (v1)
 
-### How window targeting actually works
+The 1.x binding-based commands still exist and work: `group new/add/list/show/rm`, `grid <name> <NxM> [--cols] [--gap] [--padding] [--screen]`, `summon`, `gather`, `windows [--probe] [--assign]`, `init`, `save`/`restore [--rebind]`, `theme set/apply`, `background`, `use`. They operate on *stored* window references, which die with their shells and can be recycled onto other windows — the exact failure mode 2.0 was built to eliminate. Prefer `organize`/`place`; the legacy surface is scheduled for removal.
 
-This was the hard problem. Naïve approaches don't work:
-
-- **Ghostty's `id` of a window** is `tab-group-XXXX` (the NSWindowTabGroup id), not a property System Events can address.
-- **System Events' `window <N>`** is a 1-based index into the AX z-ordered window list — frontmost first. Moving a window changes the order.
-- **`AXIdentifier`** on Ghostty's AX window is the literal string `"TerminalWindowRestoration"` (the NSWindow autosave name), identical for every Ghostty window.
-- **Window title** is shared across Ghostty windows running similar shells / Claude sessions, so name-based lookup collides.
-
-Seance's solution is **sentinel-via-TTY targeting**:
-
-1. At `group add` time, capture the calling shell's controlling TTY (`/dev/ttysNNN`) via the `tty` command, with `stdin: 'inherit'` so the child sees the same controlling terminal as seance itself.
-2. At tile / theme / save time, write a unique OSC 2 title sentinel (`⎈seance:<stamp>:<i>`) to each TTY via `fs.writeFile('/dev/ttysNNN', ESC + ']2;' + sentinel + BEL, { flag: 'a' })`. Ghostty's PTY master receives the bytes and updates the window title.
-3. Wait ~200ms for the title to propagate to AX.
-4. In one System Events AppleScript, look up each window by sentinel: `first window whose name is "⎈seance:..."`. Capture stable references first, *then* apply all moves — never resize one window at a time, because the z-order shuffles between calls.
-
-This sidesteps every namespace mismatch and gives us deterministic per-window targeting from any state.
-
-### Why batched moves matter
-
-`setWindowBounds(plans[])` takes an array, not a single window+rect. Single-window calls in a loop break because each `position` set promotes the moved window to frontmost, shifting `window 1` for the next iteration. The batched script captures all references first, then applies all rects.
-
-### Why `NSScreen.visibleFrame` via JXA, and how multi-display works
-
-`listScreens()` uses `osascript -l JavaScript` to enumerate `NSScreen.screens`, reading each display's `visibleFrame` (which excludes the menu bar and Dock automatically — Finder's `bounds of window of desktop` returns the *full* display, so tiles would land under the menu bar). `visibleFrame` is in Cocoa coordinates (bottom-left origin, y-up, one global space). The pure `cocoaFramesToAx` helper flips each into AX coordinates (top-left, y-down), anchored to the **primary** display's full frame height — so a monitor sitting above/left of the primary correctly lands at negative AX y.
-
-A group remembers its target monitor by **`CGDirectDisplayID`** (`group.displayId`), not the `NSScreen.screens` array index. The index is volatile — the array reorders when keyboard focus moves between displays, and the ids themselves re-enumerate when a display reconnects — so persisting an index would tile a group onto the wrong monitor. `grid --screen <n>` resolves the index to a display id at run time and stores *that*; `summon`/`gather` resolve it back, falling back to the main display (with a notice) when the saved monitor is unplugged.
-
-### Why themes apply per-window via OSC, not globally via config
-
-Ghostty's `theme = light:X,dark:Y` config is global. To have two groups visible at the same time with different palettes (the user-visible point of per-group theming), we read Ghostty's theme files at `/Applications/Ghostty.app/Contents/Resources/ghostty/themes/<name>`, parse the palette + bg + fg + cursor, and write `OSC 4` / `OSC 10` / `OSC 11` / `OSC 12` sequences to each window's TTY. Ghostty's config is never touched.
-
-### Why `--rebind` exists
-
-After `restore`, the spawned windows are *new* — their TTYs and Ghostty ids differ from the saved state. `--rebind` snapshots ghostty's window-id set before+after the spawn, probes the new ones, and matches each new window back into the group's slots by cwd. Without it, the restored windows exist but seance doesn't know about them.
+One legacy piece remains genuinely useful: `seance save <group>` emits a self-contained AppleScript that respawns windows in their cwds at their rects — until Phase 4's repo-keyed sessions replace it.
 
 ## State and file layout
 
 ```
 ~/.config/seance/
-├── state.json                  groups, projects, themes registry
-└── saves/
-    └── <group>.applescript     self-contained restore scripts
+├── state.json        policy (identity, placement, layout) + legacy groups + theme registry
+├── watcher.log       watcher output (if installed)
+└── saves/            legacy save/restore scripts
 ```
 
-`state.json` shape:
+The 2.0 fields of `state.json`:
 
 ```json
 {
-  "version": 1,
-  "groups": {
-    "dev": {
-      "name": "dev",
-      "windows": [
-        {
-          "windowId": "tab-group-600003c30510",
-          "ttyPath": "/dev/ttys003",
-          "slot": 1,
-          "cwd": "/Users/you/projects/myrepo"
-        }
-      ],
-      "lastLayout": { "cols": 2, "rows": 2 },
-      "themeName": "Rose Pine",
-      "createdAt": "...",
-      "updatedAt": "..."
-    }
+  "identity": {
+    "myapp": { "pair": "Rose Pine" },
+    "infra": { "pair": "Gruvbox Material", "bg": { "dark": "#2e4636", "light": "#eef4e8" }, "pinned": true }
   },
-  "projects": {},
-  "themes": {
-    "Rose Pine": { "dark": "Rose Pine", "light": "Rose Pine Dawn" }
-  }
+  "placement": [
+    { "repo": "myapp", "role": "external.left", "grid": { "cols": 2, "rows": 2 } },
+    { "repo": "*", "role": "main" }
+  ],
+  "layout": { "minPaneWidth": 384 },
+  "appearance": "dark"
 }
 ```
 
-On first load, `state.themes` is seeded with the 7 curated builtin pairs (see `src/themes.ts:BUILTIN_THEME_PAIRS`). Any pair you `theme register` later overlays the builtin.
+Everything here is safe to edit by hand; `organize` reads it fresh each run. Note what's *absent*: no TTYs, no window ids, no display ids, no coordinates — nothing that can go stale.
 
 ## Environment variables
 
@@ -288,91 +199,119 @@ On first load, `state.themes` is seeded with the 7 curated builtin pairs (see `s
 |---|---|---|
 | `SEANCE_HOME` | Override the state directory. Used by the test suite for isolation. | `~/.config/seance` |
 
+## Architecture
+
+### Module layout
+
+```
+src/
+├── cli.ts          commander wiring; organize/place/watch composition
+├── policy.ts       pure decision engine: repoOf, computeRoles, placePanes,
+│                   autoGrid, assignThemes — fully unit-tested, no I/O
+├── layouts.ts      pure rect math: (screen, NxM) → rect[]
+├── themes.ts       theme pair registry + Ghostty theme file parser
+├── state.ts        JSON persistence + policy seeding/migration
+├── groups.ts       legacy group CRUD
+├── save.ts         legacy restore-script emitter
+├── ghostty.ts      the only macOS-bound module: osascript/JXA, TTY writes,
+│                   perception (ps + lsof), batched AX window moves
+└── types.ts        shared types
+```
+
+`policy.ts`, `layouts.ts`, `themes.ts`, `state.ts`, `groups.ts`, `save.ts` are pure and testable anywhere. `ghostty.ts` owns every shell-out.
+
+### How window targeting actually works
+
+The hard problem. Every naïve approach fails:
+
+- **Ghostty's window `id`** is a tab-group id System Events can't address.
+- **System Events' `window <N>`** is a z-order index that shuffles as windows move.
+- **`AXIdentifier`** is the literal string `"TerminalWindowRestoration"` — identical for every Ghostty window.
+- **Titles** collide across similar shells, and title-setting apps (e.g. Claude Code) rewrite them every few hundred ms.
+
+seance's answer is **sentinel-via-TTY**: write a unique OSC 2 title sentinel directly to the window's TTY (burst 3× to win title races), wait a beat for AX to mirror it, then look the window up by title in System Events. Per-window capture happens in an AppleScript `try`, ALL references are captured before ANY rect is applied (a `position` set promotes the moved window to frontmost, so interleaving capture and move targets the wrong windows), and unresolved windows are retried up to 5 rounds then reported as stranded — one contested title never aborts the batch.
+
+### Perception without Accessibility
+
+`perceivePanes()` never touches AX: `ps -axo pid,ppid,tty,command` yields Ghostty's child TTYs; the deepest PID per TTY is the foreground process; `/usr/sbin/lsof` (absolute path — sterile PATHs like Alfred's don't include `/usr/sbin`, and a silent miss would collapse every repo to `home`) resolves each cwd. Fast enough to run on every Alfred keystroke.
+
+### Displays: roles over ids over indices
+
+`listScreens()` enumerates `NSScreen.screens` via JXA, reading each `visibleFrame` (excludes menu bar and Dock; Finder's desktop bounds don't) in Cocoa coordinates, flipped to AX coordinates by a pure helper anchored to the primary display's frame height — which is why a monitor above the primary lands at negative AX y. On top of that, 2.0 computes *roles* per run: the `NSScreen.screens` index reorders on focus changes, and even the "stable" `CGDirectDisplayID` re-enumerates when a display reconnects — both were observed rotting in practice. Roles derived from live geometry each time are the only representation that survives.
+
+### Themes: per-window OSC, config untouched
+
+Ghostty's `theme` config is global. To give each repo its own look *simultaneously*, seance parses Ghostty's bundled theme files (`/Applications/Ghostty.app/Contents/Resources/ghostty/themes/`) and writes `OSC 4` (16-color palette), `OSC 10/11/12` (fg/bg/cursor) to each window's TTY. This also means painting works on windows stranded on other Spaces — the TTY doesn't care about window visibility.
+
 ## Development
 
 ```bash
 npm install
-npm run dev -- group list      # run from source via tsx
-npm run build                  # compile TypeScript → dist/
-npm run typecheck              # strict typecheck, no emit
-npm test                       # vitest run (all suites)
-npm run test:watch             # vitest watch mode
-npm link                       # symlink global `seance` → this checkout
+npm run dev -- organize        # run from source via tsx
+npm run build                  # tsc → dist/
+npm run typecheck              # strict, no emit
+npm test                       # vitest, all suites
+npm link                       # live-linked global binary
 ```
 
-Strict TypeScript is on: `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`, `exactOptionalPropertyTypes`. The bin entry (`bin/seance.mjs`) loads the built `dist/cli.js`, while `tsx` runs the TS source directly via a self-invoke guard at the bottom of `src/cli.ts`.
+Strict TypeScript throughout: `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`, `exactOptionalPropertyTypes`.
 
 ## Testing
 
 ```bash
-npm test
+npm test        # 5 suites, 69 tests
 ```
 
-Four suites, currently 37 tests:
+| Suite | Covers |
+|---|---|
+| `policy.test.ts` | the full decision engine: roles, placement, auto-grid, sticky/collision-free theme assignment |
+| `layouts.test.ts` | rect math |
+| `themes.test.ts` | theme file parsing, pair resolution |
+| `ghostty.test.ts` | pure helpers |
+| `cli.test.ts` | black-box: spawns the CLI in a temp `SEANCE_HOME`, exercises state lifecycle |
 
-```
-src/
-├── layouts.test.ts     pure rect math (tileGrid, tileCustomColumns, parseGrid, parseCustomColumns)
-├── ghostty.test.ts     pure helpers (looksLikeShellDefaultTitle)
-├── themes.test.ts      pure helpers (parseThemePalette, BUILTIN_THEME_PAIRS, resolveTheme)
-└── cli.test.ts         black-box CLI: spawns `tsx src/cli.ts` in an mkdtemp dir
-                        with SEANCE_HOME isolated; exercises group lifecycle,
-                        save/restore error paths, theme list-pairs / register / apply
-```
-
-Tests that would require Ghostty / System Events are deliberately *not* exercised in CI — they live behind manual verification recipes in pull requests (see the README of each PR for the relevant smoke test).
-
-The black-box CLI tests use `mkdtemp` + `SEANCE_HOME` env injection — no state file is created until the test asks for one, and each test gets a fresh temp dir.
+Anything requiring System Events / real TTYs / Ghostty is verified manually — documented per-PR, not simulated in CI.
 
 ## Troubleshooting
 
-### "no focused Ghostty window"
+### Windows don't move
 
-`seance group add` reads Ghostty's *front* window. If Ghostty isn't frontmost when you run the command, the lookup returns nothing. Click the Ghostty window first, then re-run.
+Accessibility permission is missing for whatever launched seance (your terminal; for the watcher, the prompt appears on its first reorganize). **System Settings → Privacy & Security → Accessibility.**
 
-### Windows don't move when I run `seance grid`
+### The Alfred keyword `s` does nothing
 
-Most common: Ghostty (or the terminal you launched `seance` from) doesn't have **Accessibility** permission. Grant it under **System Settings → Privacy & Security → Accessibility**, then retry. macOS usually prompts on the first attempt — but if you dismissed it, you have to enable it manually.
+Alfred didn't load the workflow. `seance alfred install` now triggers a reload itself; if you copied the workflow manually, run `osascript -e 'tell application id "com.runningwithcrayons.Alfred" to reload workflow "com.seance.palette"'` or restart Alfred.
 
-### `seance grid` moves *other* windows that aren't in the group
+### Every repo shows up as `home`
 
-You're on a seance version before TTY-sentinel targeting landed. Update, then re-add the affected windows with `seance group rm <name> && seance group add <name> --slot N` from each shell. The fix relies on per-window TTY capture, which older entries don't have.
-
-### `seance save` says "no windows in '<group>' have slot+tty+cwd"
-
-The group still contains pre-cwd entries. Re-add each window with `seance group add <name> --slot N` from inside the shell you want to capture. The cwd is captured from the calling shell's `process.cwd()`.
-
-### `seance theme apply` errors with "failed to load Ghostty theme"
-
-The theme name in the registered pair must match an actual file at `/Applications/Ghostty.app/Contents/Resources/ghostty/themes/<name>` exactly (case- and space-sensitive). Run `seance theme list` to see what Ghostty knows about, or `ls "/Applications/Ghostty.app/Contents/Resources/ghostty/themes/"` directly.
-
-### Window titles flash `⌬probe:ttysNNN` after `windows --probe`
-
-Expected — that's the probe sentinel. Your shell or Claude Code will reset the title on the next prompt redraw.
-
-### `seance restore` spawns windows but they're not in the group
-
-Add `--rebind`: `seance restore <name> --rebind`. Without it, restore just runs the script; the new windows exist but seance doesn't track them.
-
-### Terminal text is invisible ("clear on clear")
-
-Claude Code renders with its **own** fixed theme (see `theme` in `~/.claude.json`) and uses *its* text color, not the terminal's. If Claude is dark (light text) while your terminal is on a light theme, that text vanishes on the light background — and vice-versa. No terminal theme fixes it, because Claude ignores the terminal's foreground. Match them: `seance appearance dark` (or `light`) pins every pane to Claude's appearance. seance controls only the terminal palette; it can't recolor Claude's UI.
+`lsof` failed, so no cwds resolved. seance calls it by absolute path (`/usr/sbin/lsof`) precisely for this; if you see it anyway, check that `/usr/sbin/lsof` exists and is executable. A bogus `home` entry may linger in `identity` — delete it from the state file.
 
 ### A pane "disappeared"
 
-It's almost certainly stranded on another macOS Space, not closed — its shell/process is still alive (check `ps`). This happens when an external display disconnects (especially one that cycles on/off): the windows that lived on it get left on a Space with no screen. macOS Accessibility only sees the *current* Space, so seance can't pull it back automatically. Open **Mission Control** (F3) and click the window onto your current Space, then `seance gather <group>` to re-tile it. `gather` also lists which windows are stranded and how to recover each.
+It's stranded on another macOS Space — its process is alive (`ps` will show it). Happens when an external display disconnects. Accessibility only sees the current Space, so seance reports these (with each one's foreground command) instead of moving them. Bring the window over via Mission Control, then `seance organize`.
 
-### `seance windows --probe` shows no TTY / command columns
+### Terminal text is invisible ("clear on clear")
 
-On Ghostty 1.3.x the AppleScript dictionary only exposes one window, so the probe resolves windows purely through System Events — which only sees the **current Space**. Windows on other Spaces won't appear. Bring them over (Mission Control) and re-run. (If you're on a build where it returned *zero* windows entirely, update — that was a bug where probe required a Ghostty window id it could no longer get.)
+Claude Code (and apps like it) render with their *own* fixed theme and text color, ignoring the terminal's. Dark app + light terminal = invisible text, and no terminal palette fixes it. Match the terminal to the app: `seance appearance dark`.
+
+### Two repos ended up with the same colors
+
+Only possible via manual edits or pre-2.0 state (the assigner is collision-free among live repos). Run `seance organize` — collisions among live repos are detected and one side is reassigned. Pin the pair you care about with `"pinned": true`.
+
+### `theme apply` / painting errors with "failed to load Ghostty theme"
+
+The pair's variant names must exactly match files in `/Applications/Ghostty.app/Contents/Resources/ghostty/themes/`. `seance theme list` shows what exists.
+
+### Window titles flash `⎈seance:…` or `⌬probe:…`
+
+Expected — targeting sentinels. Active shells restore their titles within milliseconds; idle windows get a readable label (their repo name) written back.
 
 ## Roadmap
 
-- **v0.x** ✅ targeting, groups, grids, windows command, save/restore, per-window themes, **multi-display tiling (`grid --screen`, `screens`), and `gather` for Space-stranded windows** (where we are now)
-- **v1** — project mode: auto-apply a theme + layout on `chpwd` via a shell hook; `.seance` files in repos
-- **v1.1** — cross-restart persistence: re-bind a saved group to live windows by cwd-matching when TTYs are gone
-- **future** — auto-arrangement (same project → adjacent slots), a `gather --all` that restores every group's row + theme after a display cycle, the `seance follow-appearance` daemon
+- **2.0** ✅ — perception over bindings: `organize`, `place`, `focus`, policy engine, Alfred palette, watcher daemon
+- **2.1** — Phase 4 of [`docs/vision.md`](docs/vision.md): direct hotkey chords (⌥1…⌥9 via Alfred), repo-keyed session save/restore that captures each pane's command (including `claude --resume <uuid>`) so a workspace survives reboots
+- **2.2** — legacy surface removal; workspaces (named multi-repo bundles)
 
 ## License
 
-MIT.
+[MIT](LICENSE)

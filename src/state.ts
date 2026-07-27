@@ -48,10 +48,10 @@ export async function loadState(): Promise<SeanceState> {
 
 /**
  * Fill in the seance 2.0 policy fields on first use. Identity is seeded from
- * legacy repo-named groups (their themeName/background were per-repo choices);
- * placement is seeded from the user's stated usual arrangement. Catppuccin is
- * the user's global Ghostty default — the "unpainted" look — so it never
- * enters the assignable ring (enforced by the caller building the ring).
+ * legacy repo-named groups (their themeName/background were per-repo choices,
+ * keyed by repo when the group was named after one). Catppuccin never enters
+ * the assignable ring (enforced by the caller building the ring) — it's a
+ * common global Ghostty default, i.e. the "unpainted" look.
  */
 export function ensurePolicy(state: SeanceState): void {
   if (!state.identity) {
@@ -61,16 +61,11 @@ export function ensurePolicy(state: SeanceState): void {
       identity[name] = {
         pair: g.themeName,
         ...(g.background != null ? { bg: g.background } : {}),
-        ...(name === "meshuga" ? { pinned: true } : {}),
       };
     }
     state.identity = identity;
   }
-  state.placement ??= [
-    { repo: "meshuga", role: "external.left" },
-    { repo: "zeus", role: "external.right" },
-    { repo: "*", role: "main" },
-  ];
+  state.placement ??= [{ repo: "*", role: "main" }];
   state.layout ??= { minPaneWidth: 384 };
 }
 

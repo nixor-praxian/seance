@@ -77,6 +77,8 @@ export interface SeanceState {
   identity?: Record<string, import("./policy.js").IdentityEntry>;
   placement?: import("./policy.js").PlacementRule[];
   layout?: { minPaneWidth: number };
+  /** Saved workspace recipes (Phase 4): repo/cwd/resume-uuid sets, no window refs. */
+  sessions?: Record<string, import("./sessions.js").SessionSnapshot>;
   /** Last group that was used / arranged / themed. Drives default-group lookups. */
   activeGroup?: string;
   /**

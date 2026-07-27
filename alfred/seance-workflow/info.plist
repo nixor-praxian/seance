@@ -64,7 +64,7 @@
 				<key>runningsubtext</key>
 				<string>Summoning…</string>
 				<key>script</key>
-				<string>export PATH="/Users/node/.nvm/versions/node/v22.16.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+				<string>export PATH="/Users/node/.nvm/versions/node/v22.16.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 seance json query "$1"</string>
 				<key>scriptargtype</key>
 				<integer>1</integer>
@@ -94,7 +94,7 @@ seance json query "$1"</string>
 				<key>escaping</key>
 				<integer>102</integer>
 				<key>script</key>
-				<string>export PATH="/Users/node/.nvm/versions/node/v22.16.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+				<string>export PATH="/Users/node/.nvm/versions/node/v22.16.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 seance ${(z)1}</string>
 				<key>scriptargtype</key>
 				<integer>1</integer>

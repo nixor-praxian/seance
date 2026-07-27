@@ -32,6 +32,12 @@ import {
   setGroupTheme,
 } from "./groups.js";
 import { parseCustomColumns, parseGrid, tile } from "./layouts.js";
+import {
+  activeSessionUuids,
+  isClaudeCommand,
+  type SessionPane,
+  type SessionSnapshot,
+} from "./sessions.js";
 import * as ghostty from "./ghostty.js";
 import {
   getTheme,
@@ -1054,6 +1060,21 @@ export async function run(argv: string[]): Promise<void> {
           arg: `appearance ${mode}`,
         });
       }
+      items.push({
+        uid: "session-save",
+        title: "Save session",
+        subtitle: `snapshot ${live.length} pane(s) as "latest" (repo + cwd + claude resume uuid)`,
+        arg: "session save latest",
+      });
+      for (const s of Object.values(state.sessions ?? {})) {
+        const resumes = s.panes.filter((p) => p.resume).length;
+        items.push({
+          uid: `session-restore-${s.name}`,
+          title: `Restore ${s.name}`,
+          subtitle: `${s.panes.length} pane(s), ${resumes} claude — saved ${s.savedAt.slice(0, 16).replace("T", " ")}`,
+          arg: `session restore ${s.name}`,
+        });
+      }
       const filtered = q ? items.filter((i) => i.title.toLowerCase().includes(q)) : items;
 
       // "<repo> <grid> [display]" grammar: "zeus 3x3 1", "zeus 3x3 display 1",
@@ -1093,6 +1114,138 @@ export async function run(argv: string[]): Promise<void> {
       if (opts.install) return installWatcher();
       if (opts.uninstall) return uninstallWatcher();
       await watchLoop(opts.interval);
+    });
+
+  // ── session (Phase 4: workspace recipes, no window refs) ─────────
+  program
+    .command("session <verb> [name]")
+    .description(
+      'Workspace snapshots. "session save [name]" captures (repo, cwd, claude-resume-uuid) per pane; "session restore [name]" respawns what\'s missing and organizes; "session list".',
+    )
+    .action(async (verb: string, nameArg: string | undefined) => {
+      const state = await loadState();
+      ensurePolicy(state);
+      const name = nameArg ?? "latest";
+
+      if (verb === "list") {
+        const entries = Object.values(state.sessions ?? {});
+        if (entries.length === 0) {
+          console.log("no saved sessions");
+          return;
+        }
+        for (const s of entries.sort((a, b) => b.savedAt.localeCompare(a.savedAt))) {
+          const resumes = s.panes.filter((p) => p.resume).length;
+          console.log(
+            `${s.name.padEnd(16)} ${String(s.panes.length).padStart(2)} pane(s), ${resumes} claude  saved ${s.savedAt}`,
+          );
+        }
+        return;
+      }
+
+      if (verb === "save") {
+        const { live } = await perceiveWorld();
+        if (live.length === 0) throw new Error("no live panes to save");
+        const claudeByCwd = new Map<string, WorldPane[]>();
+        for (const p of live) {
+          if (isClaudeCommand(p.command)) {
+            const arr = claudeByCwd.get(p.cwd) ?? [];
+            arr.push(p);
+            claudeByCwd.set(p.cwd, arr);
+          }
+        }
+        const uuidByTty = new Map<string, string>();
+        for (const [cwd, panes] of claudeByCwd) {
+          const uuids = await activeSessionUuids(cwd, panes.length);
+          panes.forEach((p, i) => {
+            const u = uuids[i];
+            if (u) uuidByTty.set(p.ttyPath, u);
+          });
+        }
+        const snapshot: SessionSnapshot = {
+          name,
+          savedAt: new Date().toISOString(),
+          panes: live.map((p) => ({
+            repo: p.repo,
+            cwd: p.cwd,
+            ...(uuidByTty.get(p.ttyPath) ? { resume: uuidByTty.get(p.ttyPath)! } : {}),
+          })),
+        };
+        state.sessions = { ...(state.sessions ?? {}), [name]: snapshot };
+        await saveState(state);
+        const resumes = snapshot.panes.filter((p) => p.resume).length;
+        console.log(
+          `saved session "${name}": ${snapshot.panes.length} pane(s), ${resumes} resumable claude session(s)`,
+        );
+        return;
+      }
+
+      if (verb === "restore") {
+        const snapshot = state.sessions?.[name];
+        if (!snapshot) {
+          const known = Object.keys(state.sessions ?? {}).join(", ") || "none";
+          throw new Error(`no session "${name}". Saved: ${known}`);
+        }
+        const { live } = await perceiveWorld();
+        const liveCmds = live.map((p) => p.command).join("\n");
+        const liveClaudeCount = new Map<string, number>();
+        const liveShellCount = new Map<string, number>();
+        for (const p of live) {
+          const m = isClaudeCommand(p.command) ? liveClaudeCount : liveShellCount;
+          m.set(p.cwd, (m.get(p.cwd) ?? 0) + 1);
+        }
+
+        const spawns: Array<{ cwd: string; command?: string; label: string }> = [];
+        const skipped: string[] = [];
+        const wantClaude = new Map<string, SessionPane[]>();
+        const wantShell = new Map<string, number>();
+        for (const p of snapshot.panes) {
+          if (p.resume) {
+            const arr = wantClaude.get(p.cwd) ?? [];
+            arr.push(p);
+            wantClaude.set(p.cwd, arr);
+          } else {
+            wantShell.set(p.cwd, (wantShell.get(p.cwd) ?? 0) + 1);
+          }
+        }
+        for (const [cwd, panes] of wantClaude) {
+          let budget = panes.length - (liveClaudeCount.get(cwd) ?? 0);
+          for (const p of panes) {
+            if (budget <= 0) {
+              skipped.push(`${p.repo} (${p.resume!.slice(0, 8)}…) — enough claude panes live in ${cwd}`);
+              continue;
+            }
+            if (liveCmds.includes(p.resume!)) {
+              skipped.push(`${p.repo} (${p.resume!.slice(0, 8)}…) — already running`);
+              continue;
+            }
+            spawns.push({ cwd, command: `claude --resume ${p.resume}`, label: p.repo });
+            budget--;
+          }
+        }
+        for (const [cwd, want] of wantShell) {
+          const missing = want - (liveShellCount.get(cwd) ?? 0);
+          for (let i = 0; i < missing; i++) {
+            spawns.push({ cwd, label: basename(cwd) });
+          }
+        }
+
+        if (spawns.length === 0) {
+          console.log(`nothing to restore — all ${snapshot.panes.length} pane(s) of "${name}" are live`);
+          for (const s of skipped) console.log(`  = ${s}`);
+          return;
+        }
+        for (const s of spawns) {
+          await ghostty.spawnWindow(s.cwd, s.command);
+          console.log(`spawned ${s.label}${s.command ? ` — ${s.command}` : ""}`);
+        }
+        for (const s of skipped) console.log(`  = ${s}`);
+        console.log(`waiting for ${spawns.length} window(s) to boot, then organizing…`);
+        await new Promise((r) => setTimeout(r, 4000));
+        await runOrganize();
+        return;
+      }
+
+      throw new Error(`unknown session verb "${verb}" — save | restore | list`);
     });
 
   // ── alfred ───────────────────────────────────────────────────────

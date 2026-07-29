@@ -5,6 +5,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   activeSessionUuids,
   isClaudeCommand,
+  listRepoSessions,
+  parseSessionTitle,
+  parseSessionTitleFromChunks,
   pickSessionUuids,
   projectDirNameForCwd,
 } from "./sessions.js";
@@ -130,5 +133,184 @@ describe("activeSessionUuids", () => {
 
   it("returns [] when the project dir does not exist", async () => {
     expect(await activeSessionUuids("/no/such/cwd", 2, projectsDir)).toEqual([]);
+  });
+});
+
+describe("parseSessionTitle", () => {
+  it("prefers a summary line even when a user line comes first", () => {
+    const head = [
+      '{"type":"user","message":{"content":"first user message"}}',
+      '{"type":"summary","summary":"Curated summary title"}',
+    ].join("\n");
+    expect(parseSessionTitle(head)).toBe("Curated summary title");
+  });
+
+  it("uses a user line with string content", () => {
+    expect(
+      parseSessionTitle('{"type":"user","message":{"content":"fix the probe race"}}'),
+    ).toBe("fix the probe race");
+  });
+
+  it("uses the first text block when content is an array", () => {
+    const head =
+      '{"type":"user","message":{"content":[{"type":"tool_result","content":"x"},{"type":"text","text":"tile the meshuga display"}]}}';
+    expect(parseSessionTitle(head)).toBe("tile the meshuga display");
+  });
+
+  it("collapses whitespace and truncates to 80 chars with an ellipsis", () => {
+    expect(
+      parseSessionTitle('{"type":"user","message":{"content":"  fix\\n\\nthe   layout  "}}'),
+    ).toBe("fix the layout");
+    const long = "a".repeat(100);
+    expect(parseSessionTitle(`{"type":"user","message":{"content":"${long}"}}`)).toBe(
+      `${"a".repeat(80)}…`,
+    );
+  });
+
+  it("skips empty and angle-bracket noise user lines", () => {
+    const head = [
+      '{"type":"user","message":{"content":"<local-command-stdout>ok</local-command-stdout>"}}',
+      '{"type":"user","message":{"content":""}}',
+      '{"type":"user","message":{"content":"real request"}}',
+    ].join("\n");
+    expect(parseSessionTitle(head)).toBe("real request");
+  });
+
+  it("tolerates a head that ends mid-line", () => {
+    const head = '{"type":"user","message":{"content":"before the cut"}}\n{"type":"summ';
+    expect(parseSessionTitle(head)).toBe("before the cut");
+    expect(parseSessionTitle('{"type":"user","mess')).toBeUndefined();
+  });
+
+  it("returns undefined for an empty head", () => {
+    expect(parseSessionTitle("")).toBeUndefined();
+  });
+
+  it("ranks a path-like user message below a later real sentence", () => {
+    const head = [
+      '{"type":"user","message":{"content":"/Users/node/Downloads/2026-06-30-report.pdf"}}',
+      '{"type":"user","message":{"content":"summarize that report"}}',
+    ].join("\n");
+    expect(parseSessionTitle(head)).toBe("summarize that report");
+    expect(
+      parseSessionTitle('{"type":"user","message":{"content":"~/Downloads/x.pdf"}}'),
+    ).toBe("~/Downloads/x.pdf");
+  });
+});
+
+describe("parseSessionTitleFromChunks", () => {
+  it("prefers a tail summary over a head user message", () => {
+    expect(
+      parseSessionTitleFromChunks(
+        '{"type":"user","message":{"content":"head user text"}}',
+        '{"type":"summary","summary":"Appended tail summary"}',
+      ),
+    ).toBe("Appended tail summary");
+  });
+
+  it("takes the last of several tail summaries", () => {
+    const tail = [
+      '{"type":"summary","summary":"older summary"}',
+      '{"type":"user","message":{"content":"noise"}}',
+      '{"type":"summary","summary":"newest summary"}',
+    ].join("\n");
+    expect(parseSessionTitleFromChunks("", tail)).toBe("newest summary");
+  });
+
+  it("tolerates a tail chunk starting mid-line", () => {
+    const tail = 'ummary","summary":"cut"}\n{"type":"summary","summary":"Tail summary"}';
+    expect(
+      parseSessionTitleFromChunks(
+        '{"type":"user","message":{"content":"head fallback"}}',
+        tail,
+      ),
+    ).toBe("Tail summary");
+  });
+});
+
+describe("listRepoSessions", () => {
+  const cwd = "/Users/node/GitHub/seance";
+  let projectsDir: string;
+
+  beforeAll(async () => {
+    projectsDir = await fs.mkdtemp(join(tmpdir(), "seance-repo-sessions-"));
+    const dir = join(projectsDir, projectDirNameForCwd(cwd));
+    await fs.mkdir(dir);
+    const base = Date.now();
+    const sessions: Array<[string, number, string]> = [
+      [
+        "dddd-live",
+        base,
+        '{"type":"user","message":{"content":"Live pane currently running"}}\n',
+      ],
+      [
+        "cccc-second",
+        base - 10_000,
+        '{"type":"summary","summary":"Fix the grid layout"}\n{"type":"user","message":{"content":"ignored"}}\n',
+      ],
+      [
+        "bbbb-third",
+        base - 20_000,
+        '{"type":"user","message":{"content":[{"type":"text","text":"Investigate probe failures"}]}}\n',
+      ],
+      [
+        "aaaa-fourth",
+        base - 30_000,
+        '{"type":"user","message":{"content":"Refactor the save flow"}}\n',
+      ],
+      [
+        "eeee-tailsum",
+        base - 40_000,
+        `{"type":"user","message":{"content":"${"x".repeat(200)}"}}\n` +
+          '{"type":"summary","summary":"Found in tail"}\n',
+      ],
+    ];
+    for (const [uuid, mtime, head] of sessions) {
+      const file = join(dir, `${uuid}.jsonl`);
+      await fs.writeFile(file, head, "utf8");
+      await fs.utimes(file, new Date(mtime), new Date(mtime));
+    }
+  });
+
+  afterAll(async () => {
+    await fs.rm(projectsDir, { recursive: true, force: true });
+  });
+
+  it("skips the live session and returns titled sessions newest-first", async () => {
+    const rows = await listRepoSessions(cwd, { skip: 1, limit: 2, projectsDir });
+    expect(rows.map((r) => r.uuid)).toEqual(["cccc-second", "bbbb-third"]);
+    expect(rows.map((r) => r.title)).toEqual([
+      "Fix the grid layout",
+      "Investigate probe failures",
+    ]);
+    expect(rows[0]!.mtimeMs).toBeGreaterThan(rows[1]!.mtimeMs);
+  });
+
+  it("stays safe when headBytes cuts a line mid-JSON", async () => {
+    const rows = await listRepoSessions(cwd, { limit: 4, projectsDir, headBytes: 64 });
+    expect(rows.map((r) => r.uuid)).toEqual([
+      "dddd-live",
+      "cccc-second",
+      "bbbb-third",
+      "aaaa-fourth",
+    ]);
+    expect(rows[1]!.title).toBe("Fix the grid layout");
+    expect(rows[2]!.title).toBeUndefined();
+    expect(rows[3]!.title).toBe("Refactor the save flow");
+  });
+
+  it("finds a summary appended past headBytes via the tail read", async () => {
+    const rows = await listRepoSessions(cwd, {
+      skip: 4,
+      limit: 1,
+      projectsDir,
+      headBytes: 64,
+    });
+    expect(rows.map((r) => r.uuid)).toEqual(["eeee-tailsum"]);
+    expect(rows[0]!.title).toBe("Found in tail");
+  });
+
+  it("returns [] when the project dir does not exist", async () => {
+    expect(await listRepoSessions("/no/such/cwd", { projectsDir })).toEqual([]);
   });
 });

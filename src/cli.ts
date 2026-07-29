@@ -35,6 +35,7 @@ import { parseCustomColumns, parseGrid, tile } from "./layouts.js";
 import {
   activeSessionUuids,
   isClaudeCommand,
+  listRepoSessions,
   type SessionPane,
   type SessionSnapshot,
 } from "./sessions.js";
@@ -1077,6 +1078,44 @@ export async function run(argv: string[]): Promise<void> {
       }
       const filtered = q ? items.filter((i) => i.title.toLowerCase().includes(q)) : items;
 
+      // Repo-token queries surface that repo's dormant conversations (titled,
+      // from transcript heads) and a repo-scoped snapshot restore.
+      const firstTok = q.split(/\s+/)[0] ?? "";
+      if (firstTok) {
+        const knownRepos = new Set<string>(byRepo.keys());
+        for (const s of Object.values(state.sessions ?? {})) {
+          for (const p of s.panes) knownRepos.add(p.repo);
+        }
+        const repo = [...knownRepos].sort().find((r) => r.toLowerCase().startsWith(firstTok));
+        if (repo) {
+          const snapName = ["latest", "auto"].find((n) =>
+            state.sessions?.[n]?.panes.some((p) => p.repo === repo),
+          );
+          if (snapName) {
+            filtered.push({
+              uid: `restore-repo-${repo}`,
+              title: `Restore ${repo} from ${snapName}`,
+              subtitle: "respawn this repo's missing panes, then organize",
+              arg: `session restore ${snapName} --repo ${repo}`,
+            });
+          }
+          const cwd = await resolveRepoCwd(state, live, repo);
+          if (cwd) {
+            const liveK = live.filter(
+              (p) => p.cwd === cwd && isClaudeCommand(p.command),
+            ).length;
+            for (const sess of await listRepoSessions(cwd, { skip: liveK, limit: 4 })) {
+              filtered.push({
+                uid: `resume-${sess.uuid}`,
+                title: `Resume ${repo} — ${sess.title ?? sess.uuid.slice(0, 8)}`,
+                subtitle: `${fmtAge(sess.mtimeMs)} ago · ${sess.uuid.slice(0, 8)}`,
+                arg: `resume ${repo} ${sess.uuid}`,
+              });
+            }
+          }
+        }
+      }
+
       // "<repo> <grid> [display]" grammar: "zeus 3x3 1", "zeus 3x3 display 1",
       // "zeus auto". Matches by repo prefix so "zeu 3x3 1" works too.
       const m = /^(\S+)\s+(\d+\s*x\s*\d+|auto)(?:\s+(?:display\s*|d)?(\d+))?$/i.exec(
@@ -1120,9 +1159,10 @@ export async function run(argv: string[]): Promise<void> {
   program
     .command("session <verb> [name]")
     .description(
-      'Workspace snapshots. "session save [name]" captures (repo, cwd, claude-resume-uuid) per pane; "session restore [name]" respawns what\'s missing and organizes; "session list".',
+      'Workspace snapshots. "session save [name]" captures (repo, cwd, claude-resume-uuid) per pane; "session restore [name] [--repo <r>]" respawns what\'s missing and organizes; "session list".',
     )
-    .action(async (verb: string, nameArg: string | undefined) => {
+    .option("--repo <repo>", "restore only this repo's panes")
+    .action(async (verb: string, nameArg: string | undefined, opts: { repo?: string }) => {
       const state = await loadState();
       ensurePolicy(state);
       const name = nameArg ?? "latest";
@@ -1162,6 +1202,12 @@ export async function run(argv: string[]): Promise<void> {
           const known = Object.keys(state.sessions ?? {}).join(", ") || "none";
           throw new Error(`no session "${wanted}". Saved: ${known}`);
         }
+        const wantedPanes = opts.repo
+          ? snapshot.panes.filter((p) => p.repo === opts.repo)
+          : snapshot.panes;
+        if (wantedPanes.length === 0) {
+          throw new Error(`session "${wanted}" has no ${opts.repo} panes`);
+        }
         const { live } = await perceiveWorld();
         const liveCmds = live.map((p) => p.command).join("\n");
         const liveClaudeCount = new Map<string, number>();
@@ -1175,7 +1221,7 @@ export async function run(argv: string[]): Promise<void> {
         const skipped: string[] = [];
         const wantClaude = new Map<string, SessionPane[]>();
         const wantShell = new Map<string, number>();
-        for (const p of snapshot.panes) {
+        for (const p of wantedPanes) {
           if (p.resume) {
             const arr = wantClaude.get(p.cwd) ?? [];
             arr.push(p);
@@ -1207,7 +1253,9 @@ export async function run(argv: string[]): Promise<void> {
         }
 
         if (spawns.length === 0) {
-          console.log(`nothing to restore — all ${snapshot.panes.length} pane(s) of "${wanted}" are live`);
+          console.log(
+            `nothing to restore — all ${wantedPanes.length}${opts.repo ? ` ${opts.repo}` : ""} pane(s) of "${wanted}" are live`,
+          );
           for (const s of skipped) console.log(`  = ${s}`);
           return;
         }
@@ -1223,6 +1271,35 @@ export async function run(argv: string[]): Promise<void> {
       }
 
       throw new Error(`unknown session verb "${verb}" — save | restore | list`);
+    });
+
+  // ── resume (single dormant conversation, CCResume-style) ─────────
+  program
+    .command("resume <repo> [uuid]")
+    .description(
+      "Respawn one dormant claude conversation for a repo. Without a uuid, the most recent one not presumed live.",
+    )
+    .action(async (repo: string, uuid: string | undefined) => {
+      const state = await loadState();
+      ensurePolicy(state);
+      const { live } = await perceiveWorld();
+      const cwd = await resolveRepoCwd(state, live, repo);
+      if (!cwd) {
+        throw new Error(
+          `can't resolve a directory for "${repo}" — no live pane, no saved session, no ~/GitHub/${repo}`,
+        );
+      }
+      let target = uuid;
+      if (!target) {
+        const liveK = live.filter((p) => p.cwd === cwd && isClaudeCommand(p.command)).length;
+        const dormant = await listRepoSessions(cwd, { skip: liveK, limit: 1 });
+        target = dormant[0]?.uuid;
+        if (!target) throw new Error(`no dormant claude sessions found for ${repo} (${cwd})`);
+      }
+      await ghostty.spawnWindow(cwd, `claude --resume ${target}`);
+      console.log(`resuming ${repo} ${target.slice(0, 8)}… — organizing once it boots`);
+      await new Promise((r) => setTimeout(r, 4000));
+      await runOrganize();
     });
 
   // ── alfred ───────────────────────────────────────────────────────
@@ -1312,6 +1389,36 @@ async function perceiveWorld(): Promise<{ live: WorldPane[]; home: string }> {
       command: p.command,
     })),
   };
+}
+
+async function resolveRepoCwd(
+  state: SeanceState,
+  live: WorldPane[],
+  repo: string,
+): Promise<string | undefined> {
+  const livePane = live.find((p) => p.repo === repo);
+  if (livePane) return livePane.cwd;
+  const snapshots = Object.values(state.sessions ?? {}).sort((a, b) =>
+    b.savedAt.localeCompare(a.savedAt),
+  );
+  for (const s of snapshots) {
+    const p = s.panes.find((x) => x.repo === repo);
+    if (p) return p.cwd;
+  }
+  const guess = join(homedir(), "GitHub", repo);
+  try {
+    await fs.access(guess);
+    return guess;
+  } catch {
+    return undefined;
+  }
+}
+
+function fmtAge(mtimeMs: number): string {
+  const s = Math.max(0, (Date.now() - mtimeMs) / 1000);
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 86400) return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
 }
 
 async function buildSnapshot(name: string, live: WorldPane[]): Promise<SessionSnapshot> {

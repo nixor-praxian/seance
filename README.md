@@ -119,8 +119,9 @@ Three layers, evaluated fresh on every run:
 | `seance screens` | List connected displays — index, stable id, size, position, role. |
 | `seance appearance <dark\|light\|auto>` | Pin theme resolution to an appearance (or follow macOS), repaint everything. |
 | `seance session save [name]` | Snapshot the workspace as a recipe: (repo, cwd, claude session uuid) per pane — resolved from `~/.claude/projects` transcripts, no window refs. Default name `latest`. |
-| `seance session restore [name]` | Respawn what's missing — `claude --resume <uuid>` panes and plain shells — inside the running Ghostty instance, skip what's already live, then organize. |
+| `seance session restore [name] [--repo <r>]` | Respawn what's missing — `claude --resume <uuid>` panes and plain shells — inside the running Ghostty instance, skip what's already live, then organize. `--repo` restores one repo only. Defaults to `latest`, falling back to the watcher's rolling `auto` snapshot (refreshed every ~5min), so restore works even if you never saved. |
 | `seance session list` | Saved sessions with pane counts and age. |
+| `seance resume <repo> [uuid]` | Respawn a single dormant claude conversation for a repo (most recent one if no uuid), then organize. |
 | `seance json query "<q>"` | Machine-readable palette items (Alfred Script Filter JSON). |
 | `seance watch` | Run the watcher loop in the foreground (see [The watcher](#the-watcher)). |
 | `seance watch --install` / `--uninstall` | Install/remove the launchd agent. |
@@ -151,6 +152,7 @@ Install once (`seance alfred install`), then type **`s `** in Alfred:
 | `s dark` | Appearance dark | pin + repaint |
 | `s save` | Save session | snapshot the workspace as `latest` |
 | `s restore` | Restore latest — k panes | respawn missing panes, organize |
+| `s myapp` | …plus Restore myapp / Resume myapp — *conversation title* | repo-scoped restore; resurrect one dormant conversation by name |
 
 Repo names prefix-match (`s mya 3x2` works). Results come from live perception on each keystroke — expect a brief "Summoning…" while `ps`/`lsof` run. If the keyword does nothing after an install, see [Troubleshooting](#troubleshooting).
 
@@ -315,7 +317,8 @@ Expected — targeting sentinels. Active shells restore their titles within mill
 
 - **2.0** ✅ — perception over bindings: `organize`, `place`, `focus`, policy engine, Alfred palette, watcher daemon
 - **2.1** ✅ — repo-keyed sessions: `session save/restore` captures each pane's claude resume uuid, so a workspace survives reboots
-- **2.2** — direct hotkey chords (⌥1…⌥9 via Alfred); legacy surface removal; workspaces (named multi-repo bundles)
+- **2.2** ✅ — selective restore (`--repo`), `resume <repo> [uuid]`, and titled dormant conversations in the palette
+- **2.3** — direct hotkey chords (⌥1…⌥9 via Alfred); legacy surface removal; workspaces (named multi-repo bundles)
 
 ## License
 

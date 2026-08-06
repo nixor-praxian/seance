@@ -170,4 +170,30 @@ describe("seance CLI (black-box, SEANCE_HOME isolated)", () => {
       expect(list.stdout).toContain("Cobalt Neon");
     });
   });
+
+  it("cheatsheet prints the how-to-use markdown", async () => {
+    await withSeanceDir(async (dir) => {
+      const r = await runSeance(["cheatsheet"], dir);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toContain("# seance");
+      expect(r.stdout).toContain("## Alfred palette");
+      expect(r.stdout).toContain("`seance organize`");
+    });
+  });
+
+  it("organize --pin without a grid explains itself", async () => {
+    await withSeanceDir(async (dir) => {
+      const r = await runSeance(["organize", "--pin"], dir);
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr).toContain("need a grid");
+    });
+  });
+
+  it("organize rejects a malformed grid", async () => {
+    await withSeanceDir(async (dir) => {
+      const r = await runSeance(["organize", "3by2"], dir);
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr).toContain("invalid grid spec");
+    });
+  });
 });

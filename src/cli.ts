@@ -14,8 +14,10 @@ import {
   resolveRole,
   type IdentityEntry,
   type LivePane,
+  type PlacementRule,
   type PolicyScreen,
 } from "./policy.js";
+import { CHEATSHEET } from "./cheatsheet.js";
 import { buildSaveScript } from "./save.js";
 import {
   addWindow,
@@ -50,7 +52,7 @@ import {
   type Appearance,
   type ThemePalette,
 } from "./themes.js";
-import type { LayoutSpec, Rect, SeanceState, WindowRef } from "./types.js";
+import type { GridSpec, LayoutSpec, Rect, SeanceState, WindowRef } from "./types.js";
 
 export async function run(argv: string[]): Promise<void> {
   const program = new Command();
@@ -936,12 +938,35 @@ export async function run(argv: string[]): Promise<void> {
 
   // ── organize (seance 2.0: perception + policy, docs/vision.md) ───
   program
-    .command("organize")
+    .command("organize [grid]")
     .description(
-      "Perceive every live pane, derive repo identity, place by policy, tile, and paint. Idempotent.",
+      'Perceive every live pane, derive repo identity, place by policy, tile, and paint. Idempotent. Pass a grid ("seance organize 3x2") to force that shape this run; "auto" clears every pinned grid.',
     )
-    .action(async () => {
-      await runOrganize();
+    .option("--screen <n>", "apply the grid to one display only (see `seance screens`)", (v) => Number(v))
+    .option("--pin", "remember the grid as policy instead of applying it for this run only")
+    .action(async (gridArg: string | undefined, opts: { screen?: number; pin?: boolean }) => {
+      if (gridArg === undefined) {
+        if (opts.screen !== undefined || opts.pin) {
+          throw new Error("--screen and --pin need a grid: \"seance organize 3x2 --pin\"");
+        }
+        await runOrganize();
+        return;
+      }
+      if (gridArg.toLowerCase() === "auto") {
+        const state = await loadState();
+        ensurePolicy(state);
+        const cleared = state.placement!.filter((r) => r.grid).map((r) => r.repo);
+        state.placement = state.placement!.map(({ grid: _grid, ...rest }) => rest);
+        await saveState(state);
+        console.log(cleared.length > 0 ? `grid pins cleared: ${cleared.join(", ")}` : "no grid pins to clear");
+        await runOrganize();
+        return;
+      }
+      await runOrganize({
+        grid: parseGrid(gridArg),
+        ...(opts.screen !== undefined ? { screen: opts.screen } : {}),
+        ...(opts.pin ? { pin: true } : {}),
+      });
     });
 
   // ── place (imperative override, recorded as policy) ──────────────
@@ -1036,7 +1061,7 @@ export async function run(argv: string[]): Promise<void> {
       const byRepo = new Map<string, number>();
       for (const p of live) byRepo.set(p.repo, (byRepo.get(p.repo) ?? 0) + 1);
 
-      const items: Array<{ uid: string; title: string; subtitle: string; arg: string }> = [
+      const items: PaletteItem[] = [
         {
           uid: "organize",
           title: "Organize",
@@ -1076,7 +1101,16 @@ export async function run(argv: string[]): Promise<void> {
           arg: `session restore ${s.name}`,
         });
       }
-      const filtered = q ? items.filter((i) => i.title.toLowerCase().includes(q)) : items;
+      items.push({
+        uid: "cheatsheet",
+        title: "Cheatsheet",
+        subtitle: "how to use seance — commands, palette grammar, troubleshooting",
+        arg: "cheatsheet --alfred",
+        match: "cheatsheet help docs readme manual guide howto",
+      });
+      const filtered = q
+        ? items.filter((i) => `${i.title} ${i.match ?? ""}`.toLowerCase().includes(q))
+        : items;
 
       // Repo-token queries surface that repo's dormant conversations (titled,
       // from transcript heads) and a repo-scoped snapshot restore.
@@ -1114,6 +1148,24 @@ export async function run(argv: string[]): Promise<void> {
             }
           }
         }
+      }
+
+      // "org <grid> [display]" grammar: one shape for every pane this run.
+      const om = /^org(?:anize)?\s+(\d+\s*x\s*\d+|auto)(?:\s+(?:display\s*|d)?(\d+))?$/i.exec(
+        (query ?? "").trim(),
+      );
+      if (om) {
+        const gridStr = om[1]!.replace(/\s/g, "").toLowerCase();
+        const screenPart = om[2] !== undefined ? ` --screen ${om[2]}` : "";
+        filtered.unshift({
+          uid: "organize-grid",
+          title: `Organize ${gridStr}${om[2] !== undefined ? ` on display ${om[2]}` : ""}`,
+          subtitle:
+            gridStr === "auto"
+              ? "clear every pinned grid, back to auto-grid"
+              : "tile every pane into this shape for this run",
+          arg: `organize ${gridStr}${screenPart}`,
+        });
       }
 
       // "<repo> <grid> [display]" grammar: "zeus 3x3 1", "zeus 3x3 display 1",
@@ -1351,6 +1403,20 @@ export async function run(argv: string[]): Promise<void> {
 
   // ── meta ─────────────────────────────────────────────────────────
   program
+    .command("cheatsheet")
+    .description("Print the how-to-use cheatsheet as Markdown (rendered by the Alfred Text View).")
+    .option("--alfred", "open it in Alfred's Text View instead of printing it")
+    .action(async (opts: { alfred?: boolean }) => {
+      if (!opts.alfred) {
+        process.stdout.write(CHEATSHEET);
+        return;
+      }
+      await ghostty.osascript(
+        `tell application id "com.runningwithcrayons.Alfred" to run trigger "cheatsheet" in workflow "com.seance.palette"`,
+      );
+    });
+
+  program
     .command("where")
     .description("Print the state file path.")
     .action(() => {
@@ -1368,6 +1434,22 @@ export async function run(argv: string[]): Promise<void> {
 
 function packageRoot(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+interface OrganizeOverride {
+  grid: GridSpec;
+  /** Display index; absent = every display. */
+  screen?: number;
+  /** Record the grid on the affected repos' placement rules instead of this run only. */
+  pin?: boolean;
+}
+
+interface PaletteItem {
+  uid: string;
+  title: string;
+  subtitle: string;
+  arg: string;
+  match?: string;
 }
 
 interface WorldPane {
@@ -1491,7 +1573,7 @@ async function paintPane(
   }
 }
 
-async function runOrganize(): Promise<void> {
+async function runOrganize(override?: OrganizeOverride): Promise<void> {
   const state = await loadState();
   ensurePolicy(state);
   const { live, home } = await perceiveWorld();
@@ -1514,6 +1596,13 @@ async function runOrganize(): Promise<void> {
   const roleOf = new Map<string, string>();
   for (const [role, s] of roles) roleOf.set(s.key, role);
 
+  let forcedKey: string | undefined;
+  if (override?.screen !== undefined) {
+    const s = policyScreens[override.screen];
+    if (!s) throw new Error(`no display #${override.screen} — see "seance screens"`);
+    forcedKey = s.key;
+  }
+
   const livePanes: LivePane[] = live.map((p) => ({
     ttyPath: p.ttyPath,
     cwd: p.cwd,
@@ -1524,14 +1613,24 @@ async function runOrganize(): Promise<void> {
 
   const plans: Array<{ ttyPath: string; rect: Rect; label?: string }> = [];
   const summary: string[] = [];
+  const pinTargets = new Map<string, string>();
   for (const [key, panes] of byScreen) {
     const screen = policyScreens.find((s) => s.key === key)!;
     const reposOn = new Set(panes.map((p) => repoByTty.get(p.ttyPath)!));
+    const role = roleOf.get(key) ?? key;
+    const forced = override && (forcedKey === undefined || forcedKey === key) ? override.grid : undefined;
+    if (forced && panes.length > forced.cols * forced.rows) {
+      throw new Error(
+        `${panes.length} pane(s) on ${role} won't fit ${forced.cols}x${forced.rows} — need at least ${panes.length} cells`,
+      );
+    }
+    if (forced && override?.pin) for (const r of reposOn) pinTargets.set(r, role);
     const pinned = state.placement!.find((r) => r.grid && reposOn.has(r.repo))?.grid;
     const grid =
-      pinned && panes.length <= pinned.cols * pinned.rows
+      forced ??
+      (pinned && panes.length <= pinned.cols * pinned.rows
         ? pinned
-        : autoGrid(panes.length, screen.rect.width, state.layout!.minPaneWidth);
+        : autoGrid(panes.length, screen.rect.width, state.layout!.minPaneWidth));
     const rects = tile(screen.rect, grid);
     panes.forEach((p, i) => {
       plans.push({ ttyPath: p.ttyPath, rect: rects[i]!, label: repoByTty.get(p.ttyPath)! });
@@ -1542,7 +1641,13 @@ async function runOrganize(): Promise<void> {
       repoCounts.set(r, (repoCounts.get(r) ?? 0) + 1);
     }
     const desc = [...repoCounts.entries()].map(([r, n]) => (n > 1 ? `${r}×${n}` : r)).join(", ");
-    summary.push(`  ${(roleOf.get(key) ?? key).padEnd(15)} ${`${grid.cols}x${grid.rows}`.padEnd(5)} ${desc}`);
+    summary.push(`  ${role.padEnd(15)} ${`${grid.cols}x${grid.rows}`.padEnd(5)} ${desc}`);
+  }
+
+  for (const [repo, role] of pinTargets) {
+    const i = state.placement!.findIndex((r) => r.repo === repo);
+    if (i >= 0) state.placement![i] = { ...state.placement![i]!, grid: override!.grid };
+    else state.placement!.unshift({ repo, role: role as PlacementRule["role"], grid: override!.grid });
   }
 
   await ghostty.activate();
@@ -1560,6 +1665,9 @@ async function runOrganize(): Promise<void> {
   for (const c of changes) console.log(`theme ${c.reason === "new" ? "assigned" : "reassigned"}: ${c.repo} → ${c.pair}`);
   console.log(`organized ${placed.length}/${live.length} pane(s), painted ${painted} (${appearance})`);
   for (const line of summary) console.log(line);
+  if (pinTargets.size > 0) {
+    console.log(`grid pinned ${override!.grid.cols}x${override!.grid.rows}: ${[...pinTargets.keys()].join(", ")}`);
+  }
   if (stranded.length > 0) {
     const cmds = await ghostty.foregroundCommandsByTty(stranded);
     console.log("stranded on another Space (bring over via Mission Control, then re-run):");

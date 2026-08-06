@@ -45,7 +45,7 @@ Ghostty's AppleScript dictionary deliberately doesn't expose what window orchest
 - **Ghostty 1.3 or newer** — from <https://ghostty.org>.
 - **Node.js 18 or newer**.
 - **Accessibility permission** — seance moves windows via System Events. Grant it to the terminal you run seance from (and let the prompt through the first time the watcher reorganizes) under **System Settings → Privacy & Security → Accessibility**.
-- **Alfred 5** (optional) — for the palette front-end. Everything works from the CLI without it.
+- **Alfred 5.5 or newer** (optional) — for the palette front-end. Everything works from the CLI without it. 5.5 is the floor because the in-Alfred cheatsheet uses the Text View object, introduced in that release.
 - **A `ghostty` CLI on `PATH`** (optional) — only `seance theme list` needs it.
 
 ## Installation
@@ -59,14 +59,22 @@ npm link              # global `seance` symlink pointing at this checkout
 seance --version      # → 2.0.0
 ```
 
-Then, optionally:
+`npm link` symlinks the global `seance` at this checkout, so edits go live after `npm run build`. If you'd rather not link globally, every command below works as `npm run dev -- <args>` from the checkout.
+
+Then the two optional pieces:
 
 ```bash
-seance alfred install   # install the Alfred workflow (keyword: s)
-seance watch --install  # install + start the launchd watcher
+seance alfred install   # the Alfred palette (keyword: s)
+seance watch --install  # the launchd watcher
 ```
 
-To remove later: `seance watch --uninstall`, `npm unlink -g seance`, and delete the workflow from Alfred.
+**`seance alfred install`** copies `alfred/seance-workflow` to `~/Library/Application Support/Alfred/Alfred.alfredpreferences/workflows/com.seance.palette`, rewrites the workflow's `PATH` to include the directory of the node binary running the install (Alfred runs scripts under a sterile environment, so an unpatched workflow can't find `seance`), and asks Alfred to reload it. Verify by typing `s ` in Alfred — you should get the menu; `s help` opens the cheatsheet. Re-run the command after any `npm run build`, or after moving your node install. If Alfred syncs its preferences elsewhere, check `defaults read com.runningwithcrayons.Alfred-Preferences syncfolder` and copy the folder there by hand.
+
+**`seance watch --install`** writes `~/Library/LaunchAgents/com.seance.watcher.plist` and starts it — see [The watcher](#the-watcher). It runs `dist/cli.js`, so rebuild and then `seance watch --uninstall && seance watch --install` to pick up source changes.
+
+The first time seance moves a window, macOS will ask for **Accessibility** permission for the terminal you ran it from; grant it under System Settings → Privacy & Security → Accessibility, and again for the watcher when it first reorganizes.
+
+To remove later: `seance watch --uninstall`, `npm unlink -g seance`, and delete the workflow from Alfred's preferences.
 
 ## Quickstart
 
@@ -87,6 +95,8 @@ organized 5/5 pane(s), painted 5 (dark)
 That's the whole workflow. Each repo got a distinct palette (sticky — same colors tomorrow), panes were tiled by display, and re-running any time is safe. Want a specific shape for one repo?
 
 ```bash
+seance organize 3x2                 # one shape for every pane, this run only
+seance organize 3x2 --screen 1      # …on display 1 only
 seance place myapp 2x2 --screen 1   # tile myapp 2x2 on display 1, and remember that
 seance place myapp auto             # forget it, back to auto-grid
 ```
@@ -114,6 +124,8 @@ Three layers, evaluated fresh on every run:
 | Command | Description |
 |---|---|
 | `seance organize` | Perceive every live pane, derive repo identity, assign colors, place by policy, tile, paint. Idempotent. |
+| `seance organize <NxM> [--screen n] [--pin]` | Same, but force that grid instead of auto-grid — every display, or one with `--screen`. Transient by default; `--pin` writes the grid onto the affected repos' placement rules so it survives. Errors if a display's panes don't fit the shape. |
+| `seance organize auto` | Clear every pinned grid, then organize. |
 | `seance place <repo> <NxM> [--screen n]` | Tile the repo's panes now **and** pin `{display role, grid}` as its placement rule. `place <repo> auto` clears the grid pin. |
 | `seance focus <repo>` | Raise and focus the repo's first live pane. |
 | `seance screens` | List connected displays — index, stable id, size, position, role. |
@@ -122,6 +134,7 @@ Three layers, evaluated fresh on every run:
 | `seance session restore [name] [--repo <r>]` | Respawn what's missing — `claude --resume <uuid>` panes and plain shells — inside the running Ghostty instance, skip what's already live, then organize. `--repo` restores one repo only. Defaults to `latest`, falling back to the watcher's rolling `auto` snapshot (refreshed every ~5min), so restore works even if you never saved. |
 | `seance session list` | Saved sessions with pane counts and age. |
 | `seance resume <repo> [uuid]` | Respawn a single dormant claude conversation for a repo (most recent one if no uuid), then organize. |
+| `seance cheatsheet` | Print the how-to-use cheatsheet as Markdown. `--alfred` renders it in Alfred's Text View instead. |
 | `seance json query "<q>"` | Machine-readable palette items (Alfred Script Filter JSON). |
 | `seance watch` | Run the watcher loop in the foreground (see [The watcher](#the-watcher)). |
 | `seance watch --install` / `--uninstall` | Install/remove the launchd agent. |
@@ -146,6 +159,8 @@ Install once (`seance alfred install`), then type **`s `** in Alfred:
 |---|---|---|
 | `s` | full menu | — |
 | `s org` | Organize | full perceive → place → paint |
+| `s org 3x2` / `s org 3x2 1` | Organize 3x2 (on display 1) | force that grid for this run |
+| `s help` | Cheatsheet | opens the how-to-use page in Alfred's Text View |
 | `s myapp` | Focus myapp | raise + focus that repo |
 | `s myapp 3x2 1` | Place myapp 3x2 on display 1 | tile + pin, like `seance place` |
 | `s myapp auto` | Place myapp auto | clear the grid pin |
@@ -288,6 +303,10 @@ Accessibility permission is missing for whatever launched seance (your terminal;
 ### The Alfred keyword `s` does nothing
 
 Alfred didn't load the workflow. `seance alfred install` now triggers a reload itself; if you copied the workflow manually, run `osascript -e 'tell application id "com.runningwithcrayons.Alfred" to reload workflow "com.seance.palette"'` or restart Alfred.
+
+### `s help` does nothing / the cheatsheet doesn't open
+
+The cheatsheet renders in Alfred's **Text View**, which needs **Alfred 5.5+** — older versions silently drop the object. The palette item works by calling back into Alfred (`seance cheatsheet --alfred` fires the workflow's external trigger), so it also needs `seance` on the workflow's baked-in `PATH`: re-run `seance alfred install`. `seance cheatsheet` alone always works and prints the same content to stdout.
 
 ### Every repo shows up as `home`
 

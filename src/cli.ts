@@ -4,7 +4,14 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
-import { ensurePolicy, loadState, saveState, savesDir, statePath } from "./state.js";
+import {
+  ensurePolicy,
+  loadState,
+  saveState,
+  savesDir,
+  statePath,
+  syncClaudeCodeTheme,
+} from "./state.js";
 import {
   assignThemes,
   autoGrid,
@@ -52,6 +59,11 @@ import {
   type Appearance,
   type ThemePalette,
 } from "./themes.js";
+import {
+  DEFAULT_MIN_CONTRAST,
+  contrastRepairs,
+  enforceContrast,
+} from "./contrast.js";
 import type { GridSpec, LayoutSpec, Rect, SeanceState, WindowRef } from "./types.js";
 
 export async function run(argv: string[]): Promise<void> {
@@ -741,7 +753,10 @@ export async function run(argv: string[]): Promise<void> {
               try {
                 const appearance = state.appearance ?? (await ghostty.currentAppearance());
                 const themeName = resolveTheme(pair, appearance);
-                const palette = await parseThemeFile(themeFilePath(themeName));
+                const palette = guardPalette(
+                  state,
+                  await parseThemeFile(themeFilePath(themeName)),
+                );
                 const ttyWindows = g.windows.filter((w) => w.ttyPath);
                 for (const w of ttyWindows) {
                   await ghostty.applyPaletteToTty(w.ttyPath!, palette);
@@ -913,7 +928,7 @@ export async function run(argv: string[]): Promise<void> {
   program
     .command("appearance <mode>")
     .description(
-      "Force theme appearance regardless of macOS: dark | light | auto (follow system). Repaints all themed groups. Use dark to match Claude Code's own fixed theme.",
+      "Force theme appearance regardless of macOS: dark | light | auto (follow system). Repaints all themed groups and points Claude Code's own theme at the same polarity.",
     )
     .action(async (mode: string) => {
       const m = mode.toLowerCase();
@@ -925,6 +940,13 @@ export async function run(argv: string[]): Promise<void> {
       else state.appearance = m as "dark" | "light";
       await saveState(state);
       console.log(`appearance = ${m}`);
+
+      const effective = state.appearance ?? (await ghostty.currentAppearance());
+      const synced = await syncClaudeCodeTheme(effective);
+      if (synced) {
+        console.log(`Claude Code theme = ${synced} (restart or /config in running sessions)`);
+      }
+
       for (const name of Object.keys(state.groups)) {
         if (state.groups[name]!.themeName) {
           try {
@@ -933,6 +955,49 @@ export async function run(argv: string[]): Promise<void> {
             console.error(`  ${name}: ${(err as Error).message}`);
           }
         }
+      }
+    });
+
+  // ── contrast ─────────────────────────────────────────────────────
+  program
+    .command("contrast [ratio]")
+    .description(
+      "Minimum WCAG contrast every palette slot must clear against its background before seance paints it. No argument audits the registered pairs. \"off\" paints themes verbatim.",
+    )
+    .action(async (ratio: string | undefined) => {
+      const state = await loadState();
+      if (ratio !== undefined) {
+        const value = ratio.toLowerCase() === "off" ? 0 : Number(ratio);
+        if (!Number.isFinite(value) || value < 0 || value > 21) {
+          throw new Error('contrast must be a ratio between 0 and 21, or "off"');
+        }
+        state.minContrast = value;
+        await saveState(state);
+      }
+      const minRatio = state.minContrast ?? DEFAULT_MIN_CONTRAST;
+      console.log(
+        `min contrast = ${minRatio === 0 ? "off (themes painted verbatim)" : `${minRatio}:1`}`,
+      );
+      if (minRatio === 0) return;
+
+      const appearance = state.appearance ?? (await ghostty.currentAppearance());
+      console.log(`\nrepairs at ${appearance} appearance:\n`);
+      console.log("PAIR               THEME                     WORST  REPAIRED");
+      console.log("-----------------  ------------------------  -----  --------");
+      for (const { name, pair } of listThemePairs(state)) {
+        const themeName = resolveTheme(pair, appearance);
+        let palette;
+        try {
+          palette = await parseThemeFile(themeFilePath(themeName));
+        } catch {
+          console.log(`${name.padEnd(17)}  ${themeName.padEnd(24)}  (theme file not found)`);
+          continue;
+        }
+        const repairs = contrastRepairs(palette, { minRatio });
+        const worst = repairs.length === 0 ? "—" : `${Math.min(...repairs.map((r) => r.ratioBefore)).toFixed(2)}`;
+        console.log(
+          `${name.padEnd(17)}  ${themeName.padEnd(24)}  ${worst.padEnd(5)}  ${repairs.length === 0 ? "none" : `${repairs.length}/18`}`,
+        );
       }
     });
 
@@ -1543,6 +1608,22 @@ function bgFor(entry: IdentityEntry, appearance: Appearance): string | undefined
   return appearance === "dark" ? entry.bg.dark : entry.bg.light;
 }
 
+/**
+ * The single choke point every palette passes through before it reaches a TTY.
+ * Folds the background override into the palette so contrast is measured
+ * against the colour actually painted, then lifts anything unreadable.
+ */
+function guardPalette(
+  state: SeanceState,
+  palette: ThemePalette,
+  background?: string,
+): ThemePalette {
+  return enforceContrast(palette, {
+    ...(background ? { background } : {}),
+    minRatio: state.minContrast ?? DEFAULT_MIN_CONTRAST,
+  });
+}
+
 async function paintPane(
   state: SeanceState,
   pane: WorldPane,
@@ -1554,19 +1635,19 @@ async function paintPane(
   const pair = getTheme(state, entry.pair);
   if (!pair) return false;
   const themeName = resolveTheme(pair, appearance);
-  let palette = paletteCache.get(themeName);
+  const bg = bgFor(entry, appearance);
+  const key = `${themeName}|${bg ?? ""}`;
+  let palette = paletteCache.get(key);
   if (!palette) {
     try {
-      palette = await parseThemeFile(themeFilePath(themeName));
+      palette = guardPalette(state, await parseThemeFile(themeFilePath(themeName)), bg);
     } catch {
       return false;
     }
-    paletteCache.set(themeName, palette);
+    paletteCache.set(key, palette);
   }
   try {
     await ghostty.applyPaletteToTty(pane.ttyPath, palette);
-    const bg = bgFor(entry, appearance);
-    if (bg) await ghostty.applyBackgroundToTty(pane.ttyPath, bg);
     return true;
   } catch {
     return false;
@@ -1797,7 +1878,7 @@ async function paintGroupTheme(state: SeanceState, name: string): Promise<void> 
   }
   const appearance = state.appearance ?? (await ghostty.currentAppearance());
   const themeName = resolveTheme(pair, appearance);
-  const palette = await parseThemeFile(themeFilePath(themeName)).catch((err: Error) => {
+  const raw = await parseThemeFile(themeFilePath(themeName)).catch((err: Error) => {
     throw new Error(`failed to load Ghostty theme "${themeName}": ${err.message}`);
   });
   const windows = g.windows.filter((w) => w.ttyPath);
@@ -1812,18 +1893,22 @@ async function paintGroupTheme(state: SeanceState, name: string): Promise<void> 
         : appearance === "dark"
           ? g.background.dark
           : g.background.light;
+  const palette = guardPalette(state, raw, bg);
+  const repaired = contrastRepairs(raw, {
+    ...(bg ? { background: bg } : {}),
+    minRatio: state.minContrast ?? DEFAULT_MIN_CONTRAST,
+  }).length;
   let applied = 0;
   for (const w of windows) {
     try {
       await ghostty.applyPaletteToTty(w.ttyPath!, palette);
-      if (bg) await ghostty.applyBackgroundToTty(w.ttyPath!, bg);
       applied++;
     } catch (err) {
       console.error(`  ${w.ttyPath}: ${(err as Error).message}`);
     }
   }
   console.log(
-    `applied "${g.themeName}" → ${themeName} (${appearance})${bg ? ` + bg ${bg}` : ""} to ${applied}/${windows.length} window(s) in "${name}"`,
+    `applied "${g.themeName}" → ${themeName} (${appearance})${bg ? ` + bg ${bg}` : ""} to ${applied}/${windows.length} window(s) in "${name}"${repaired > 0 ? ` · ${repaired} slot(s) contrast-repaired` : ""}`,
   );
 }
 

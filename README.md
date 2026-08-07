@@ -129,7 +129,8 @@ Three layers, evaluated fresh on every run:
 | `seance place <repo> <NxM> [--screen n]` | Tile the repo's panes now **and** pin `{display role, grid}` as its placement rule. `place <repo> auto` clears the grid pin. |
 | `seance focus <repo>` | Raise and focus the repo's first live pane. |
 | `seance screens` | List connected displays — index, stable id, size, position, role. |
-| `seance appearance <dark\|light\|auto>` | Pin theme resolution to an appearance (or follow macOS), repaint everything. |
+| `seance appearance <dark\|light\|auto>` | Pin theme resolution to an appearance (or follow macOS), repaint everything, and point Claude Code's own theme at the same polarity. |
+| `seance contrast [ratio\|off]` | Minimum WCAG contrast every palette slot must clear before it's painted (default `4.5`). No argument audits the registered pairs. |
 | `seance session save [name]` | Snapshot the workspace as a recipe: (repo, cwd, claude session uuid) per pane — resolved from `~/.claude/projects` transcripts, no window refs. Default name `latest`. |
 | `seance session restore [name] [--repo <r>]` | Respawn what's missing — `claude --resume <uuid>` panes and plain shells — inside the running Ghostty instance, skip what's already live, then organize. `--repo` restores one repo only. Defaults to `latest`, falling back to the watcher's rolling `auto` snapshot (refreshed every ~5min), so restore works even if you never saved. |
 | `seance session list` | Saved sessions with pane counts and age. |
@@ -209,7 +210,8 @@ The 2.0 fields of `state.json`:
     { "repo": "*", "role": "main" }
   ],
   "layout": { "minPaneWidth": 384 },
-  "appearance": "dark"
+  "appearance": "dark",
+  "minContrast": 4.5
 }
 ```
 
@@ -316,9 +318,13 @@ The cheatsheet renders in Alfred's **Text View**, which needs **Alfred 5.5+** �
 
 It's stranded on another macOS Space — its process is alive (`ps` will show it). Happens when an external display disconnects. Accessibility only sees the current Space, so seance reports these (with each one's foreground command) instead of moving them. Bring the window over via Mission Control, then `seance organize`.
 
-### Terminal text is invisible ("clear on clear")
+### Terminal text is invisible ("white on white")
 
-Claude Code (and apps like it) render with their *own* fixed theme and text color, ignoring the terminal's. Dark app + light terminal = invisible text, and no terminal palette fixes it. Match the terminal to the app: `seance appearance dark`.
+Two independent causes, both handled — but one of them needs a restart.
+
+**The palette.** Ghostty's bundled themes reserve slots that sit at or near the background: ANSI 0 on dark themes, ANSI 7/15 on light ones. Read as a whole that's fine; a TUI that picks a slot and writes text in it gets white on white. Every light theme in the curated set is affected — One Half Light's bright white is **1.04:1** against its own background, Dayfox 1.05, Everforest Light Med 1.16 — and the chromatic slots aren't much better (9–14 of 16 under 4.5:1). So seance repairs the palette before writing it: anything under `seance contrast`'s threshold is moved in OKLab lightness until it clears, which preserves hue (a washed-out amber becomes a darker amber, not brown) and only surrenders chroma when lightness alone can't get there. The repair measures against the background actually painted, so a per-repo `background` override is accounted for. `seance contrast` audits what it's changing; `seance contrast off` paints themes verbatim.
+
+**The app's own theme.** Claude Code renders anything non-plain — dim status lines, file paths, error banners, diff blocks — from a fixed palette chosen by *its* `theme` setting, not by the terminal. Only its default text follows the terminal's foreground. So a light terminal under a dark Claude Code theme leaves every accent color near-invisible no matter what seance writes to the TTY. `seance appearance` now sets `theme` in `~/.claude/settings.json` to match (preserving any `-ansi` / `-daltonized` variant you picked). **Sessions already running keep the theme they started with** — restart them, or `/config` in place.
 
 ### Two repos ended up with the same colors
 

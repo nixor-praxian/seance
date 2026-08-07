@@ -31,7 +31,9 @@ async function runSeance(
   opts: { input?: string } = {},
 ): Promise<RunResult> {
   const result = await execa(ENTRY, [CLI_SRC, ...args], {
-    env: { ...process.env, SEANCE_HOME: dir },
+    // CLAUDE_CONFIG_DIR is redirected into the sandbox so `appearance` can
+    // never rewrite the developer's real ~/.claude/settings.json.
+    env: { ...process.env, SEANCE_HOME: dir, CLAUDE_CONFIG_DIR: join(dir, "claude") },
     reject: false,
     ...(opts.input !== undefined ? { input: opts.input } : {}),
   });
@@ -194,6 +196,68 @@ describe("seance CLI (black-box, SEANCE_HOME isolated)", () => {
       const r = await runSeance(["organize", "3by2"], dir);
       expect(r.exitCode).not.toBe(0);
       expect(r.stderr).toContain("invalid grid spec");
+    });
+  });
+
+  async function writeClaudeSettings(dir: string, settings: unknown): Promise<string> {
+    const path = join(dir, "claude", "settings.json");
+    await fs.mkdir(join(dir, "claude"), { recursive: true });
+    await fs.writeFile(path, JSON.stringify(settings, null, 2), "utf8");
+    return path;
+  }
+
+  async function readClaudeSettings(dir: string): Promise<Record<string, unknown>> {
+    const raw = await fs.readFile(join(dir, "claude", "settings.json"), "utf8");
+    return JSON.parse(raw) as Record<string, unknown>;
+  }
+
+  it("appearance points Claude Code's own theme at the same polarity", async () => {
+    await withSeanceDir(async (dir) => {
+      await writeClaudeSettings(dir, { theme: "dark", env: { FOO: "bar" } });
+      const r = await runSeance(["appearance", "light"], dir);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toContain("Claude Code theme = light");
+      const settings = await readClaudeSettings(dir);
+      expect(settings.theme).toBe("light");
+      expect(settings.env).toEqual({ FOO: "bar" });
+    });
+  });
+
+  it("appearance preserves an accessibility theme variant", async () => {
+    await withSeanceDir(async (dir) => {
+      await writeClaudeSettings(dir, { theme: "dark-daltonized" });
+      await runSeance(["appearance", "light"], dir);
+      expect((await readClaudeSettings(dir)).theme).toBe("light-daltonized");
+    });
+  });
+
+  it("appearance stays quiet when Claude Code has no settings file", async () => {
+    await withSeanceDir(async (dir) => {
+      const r = await runSeance(["appearance", "dark"], dir);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toContain("appearance = dark");
+      expect(r.stdout).not.toContain("Claude Code theme");
+    });
+  });
+
+  it("contrast persists a minimum ratio and accepts off", async () => {
+    await withSeanceDir(async (dir) => {
+      const set = await runSeance(["contrast", "7"], dir);
+      expect(set.exitCode).toBe(0);
+      expect(set.stdout).toContain("min contrast = 7:1");
+      expect((await readState(dir) as { minContrast?: number }).minContrast).toBe(7);
+
+      const off = await runSeance(["contrast", "off"], dir);
+      expect(off.stdout).toContain("off (themes painted verbatim)");
+      expect((await readState(dir) as { minContrast?: number }).minContrast).toBe(0);
+    });
+  });
+
+  it("contrast rejects a nonsense ratio", async () => {
+    await withSeanceDir(async (dir) => {
+      const r = await runSeance(["contrast", "banana"], dir);
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr).toContain("between 0 and 21");
     });
   });
 });

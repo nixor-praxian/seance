@@ -83,8 +83,14 @@ export interface SeanceState {
   activeGroup?: string;
   /**
    * Force theme resolution to a fixed appearance, overriding macOS. Absent =
-   * follow the system. Useful because Claude Code renders with its own fixed
-   * theme, so terminals must match it rather than the OS.
+   * follow the system. `seance appearance` also points Claude Code's own theme
+   * at this, since Claude Code paints its non-plain text from a fixed palette
+   * of its own that the terminal's colors do not reach.
    */
   appearance?: "dark" | "light";
+  /**
+   * Minimum WCAG contrast every palette slot must clear against the background
+   * it is painted on. Absent = DEFAULT_MIN_CONTRAST. 0 disables the guard.
+   */
+  minContrast?: number;
 }

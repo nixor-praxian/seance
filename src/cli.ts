@@ -1780,6 +1780,18 @@ async function watchLoop(intervalMs: number): Promise<void> {
       state.identity = identity;
 
       const appearance = state.appearance ?? (await ghostty.currentAppearance());
+
+      // Claude Code rewrites the whole of ~/.claude/settings.json from its own
+      // in-memory state whenever a setting changes via /config, so a session
+      // that booted under the old theme silently reverts this key for every
+      // session started afterwards. Re-assert it every tick rather than
+      // writing once: a read of a few KB is nothing next to the osascript and
+      // lsof work this loop already does, and it self-heals within one pass.
+      // Don't gate this on `tick % n` — a tick is one iteration of a loop whose
+      // body can take many seconds, not a wall-clock interval.
+      const synced = await syncClaudeCodeTheme(appearance);
+      if (synced) console.log(`watch: Claude Code theme reverted → restored ${synced}`);
+
       for (const p of live) {
         const entry = identity[p.repo];
         if (!entry) continue;

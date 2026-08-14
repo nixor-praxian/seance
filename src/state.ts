@@ -70,7 +70,8 @@ export function ensurePolicy(state: SeanceState): void {
     state.identity = identity;
   }
   state.placement ??= [{ repo: "*", role: "main" }];
-  state.layout ??= { minPaneWidth: 384 };
+  state.layout ??= { minPaneWidth: 384, minPaneHeight: 256 };
+  state.layout.minPaneHeight ??= 256;
 }
 
 export async function saveState(state: SeanceState): Promise<void> {

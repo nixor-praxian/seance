@@ -76,7 +76,18 @@ export interface SeanceState {
    */
   identity?: Record<string, import("./policy.js").IdentityEntry>;
   placement?: import("./policy.js").PlacementRule[];
-  layout?: { minPaneWidth: number };
+  /**
+   * Named placement rule sets applied by `seance arrange <name>`. `placement`
+   * is the unnamed default; the shape is identical, so no adapter is needed.
+   */
+  arrangements?: Record<string, import("./policy.js").PlacementRule[]>;
+  /**
+   * Which display `arrange` last sent each unpinned repo to, so a repo doesn't
+   * hop screens between runs. Derived, never authored; `organize` never reads it.
+   * A role is policy (recomputed from live geometry), not a binding.
+   */
+  autoPlacement?: Record<string, import("./policy.js").Role>;
+  layout?: { minPaneWidth: number; minPaneHeight?: number };
   /** Saved workspace recipes (Phase 4): repo/cwd/resume-uuid sets, no window refs. */
   sessions?: Record<string, import("./sessions.js").SessionSnapshot>;
   /** Last group that was used / arranged / themed. Drives default-group lookups. */

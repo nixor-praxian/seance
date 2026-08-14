@@ -825,19 +825,31 @@ export async function runScriptFile(path: string): Promise<void> {
   await execa("osascript", [path]);
 }
 
+export interface WindowState {
+  rect: Rect;
+  minimized: boolean;
+}
+
+export async function currentRectsByTty(
+  targets: Array<{ ttyPath: string; label?: string }>,
+): Promise<Map<string, Rect>> {
+  const states = await windowStatesByTty(targets);
+  return new Map([...states].map(([ttyPath, state]) => [ttyPath, state.rect]));
+}
+
 /**
- * Read the current rect of each window identified by ttyPath. Uses the same
- * sentinel-via-TTY trick as setWindowBounds, but only reads instead of moves.
- * Returns Map<ttyPath, Rect>; missing entries mean the window couldn't be located.
+ * Read the current frame and minimized state of each window identified by
+ * ttyPath. Uses the same sentinel-via-TTY trick as setWindowBounds, but only
+ * reads instead of moves. Missing entries mean the window couldn't be located.
  *
  * Reading clobbers the title with a sentinel, so afterwards we restore a
  * readable label (the caller-supplied `label`, e.g. the repo, falling back to
  * the tty basename) — otherwise idle windows are left wearing "⎈seance-read:…".
  */
-export async function currentRectsByTty(
+export async function windowStatesByTty(
   targets: Array<{ ttyPath: string; label?: string }>,
-): Promise<Map<string, Rect>> {
-  const result = new Map<string, Rect>();
+): Promise<Map<string, WindowState>> {
+  const result = new Map<string, WindowState>();
   if (targets.length === 0) return result;
 
   const stamp = Date.now().toString(36);
@@ -864,9 +876,25 @@ export async function currentRectsByTty(
             set nm to name of w
           end try
           if nm contains "⎈seance-read:" then
-            set p to position of w
-            set sz to size of w
-            set out to out & nm & tab & (item 1 of p as string) & tab & (item 2 of p as string) & tab & (item 1 of sz as string) & tab & (item 2 of sz as string) & "\\n"
+            set px to "?"
+            set py to "?"
+            try
+              set p to position of w
+              set px to (item 1 of p as string)
+              set py to (item 2 of p as string)
+            end try
+            set sw to "?"
+            set sh to "?"
+            try
+              set sz to size of w
+              set sw to (item 1 of sz as string)
+              set sh to (item 2 of sz as string)
+            end try
+            set m to "?"
+            try
+              set m to (value of attribute "AXMinimized" of w) as string
+            end try
+            set out to out & nm & tab & px & tab & py & tab & sw & tab & sh & tab & m & "\\n"
           end if
         end repeat
         return out
@@ -876,19 +904,19 @@ export async function currentRectsByTty(
   const raw = await osascript(script);
   const bySentinel = new Map(stamped.map((s) => [s.sentinel, s.ttyPath]));
   for (const row of parseTsv(raw)) {
-    const [name, x, y, w, h] = row;
+    const [name, x, y, w, h, m] = row;
     if (!name) continue;
     const idx = name.indexOf("⎈seance-read:");
     if (idx < 0) continue;
     const sent = name.slice(idx);
     const ttyPath = bySentinel.get(sent);
     if (!ttyPath) continue;
-    result.set(ttyPath, {
-      x: Number(x),
-      y: Number(y),
-      width: Number(w),
-      height: Number(h),
-    });
+    const rect = { x: Number(x), y: Number(y), width: Number(w), height: Number(h) };
+    // A minimized window can refuse `position of w`; the reads are wrapped in
+    // `try` so one such window can't abort the whole enumeration and hand
+    // `gather`/`save` an empty result. An unreadable frame means minimized.
+    const readable = Object.values(rect).every(Number.isFinite);
+    result.set(ttyPath, { rect, minimized: m === "true" || !readable });
   }
 
   // Restore a readable title — the sentinel must not linger on idle windows.

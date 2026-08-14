@@ -7,7 +7,8 @@ Run one command — `seance organize` — and every Ghostty window is identified
 ## Key features
 
 - **Perception, not bookkeeping** — a pane's identity is derived live from its working directory (`repo = basename(cwd)`), rediscovered at every command. There are no groups to maintain and no saved window references to rot.
-- **One verb** — `seance organize` perceives → colors → places → tiles → paints. Idempotent; safe to run any time, from the CLI, Alfred, or the watcher.
+- **One verb** — `seance arrange` perceives → colors → distributes → tiles → paints, deciding the shape itself. Idempotent; safe to run any time, from the CLI or Alfred. `seance organize` is the same pass when you want to name the grid yourself.
+- **Repos stay together** — each repo's panes get one contiguous block, and the block is shaped to the display: a landscape screen splits into columns, a rotated one into stacked rows. Panes you've minimized are left minimized instead of eating a slot.
 - **Colors per project** — each repo is assigned a theme pair from a curated ring, collision-free among live repos, sticky across days. Applied per *window* via OSC sequences, so five repos can sit side by side in five palettes.
 - **Policy, not coordinates** — displays are addressed by *role* (`main`, `external.left`, `external.right`), computed from live geometry at each run. Layouts derive from one number (`minPaneWidth`). One screen or three, docked or nomad: same rules, correct result.
 - **Imperative override that sticks** — `seance place zeus 3x3 --screen 1` tiles now *and* records the choice as policy, so every future organize honours it. `place zeus auto` clears it.
@@ -81,24 +82,28 @@ To remove later: `seance watch --uninstall`, `npm unlink -g seance`, and delete 
 Open a few Ghostty windows in different project directories. Then:
 
 ```bash
-seance organize
+seance arrange
 ```
 
 ```
 theme assigned: myapp → Rose Pine
 theme assigned: infra → Gruvbox Material
-organized 5/5 pane(s), painted 5 (dark)
-  main            3x1   myapp×2, infra
-  external.left   2x1   docs, scratch
+arranged 5/5 pane(s), painted 5 (dark)
+  main             3 pane(s)  myapp 2x1, infra 1x1
+  external.left    2 pane(s)  docs 1x1, scratch 1x1
 ```
 
-That's the whole workflow. Each repo got a distinct palette (sticky — same colors tomorrow), panes were tiled by display, and re-running any time is safe. Want a specific shape for one repo?
+That's the whole workflow. Each repo got a distinct palette (sticky — same colors tomorrow), each repo's panes were kept together in one block, the repos were spread across the displays you actually have, and re-running any time is safe. Minimized panes are left alone.
+
+**`arrange` vs `organize`.** `arrange` means *you figure it out*: it decides the display split and the shape, and takes no grid. `organize` means *I want this shape*: it does the same perceive → place → paint pass, but a grid you name (or pinned) drives the tiling.
 
 ```bash
-seance organize 3x2                 # one shape for every pane, this run only
-seance organize 3x2 --screen 1      # …on display 1 only
-seance place myapp 2x2 --screen 1   # tile myapp 2x2 on display 1, and remember that
-seance place myapp auto             # forget it, back to auto-grid
+seance arrange --save desk           # freeze the current repo→display split, moving nothing
+seance arrange desk                  # put it back later
+seance organize 3x2                  # one shape for every pane, this run only
+seance organize 3x2 --screen 1       # …on display 1 only
+seance place myapp 2x2 --screen 1    # tile myapp 2x2 on display 1, and remember that
+seance place myapp auto              # forget it, back to auto-grid
 ```
 
 With the watcher installed you generally never type anything again: new panes are painted as they appear, and display changes trigger a re-organize.
@@ -113,7 +118,11 @@ Three layers, evaluated fresh on every run:
 
 - **Identity** (`repo → theme pair`): assigned from a ring of curated pairs the first time a repo is seen, then sticky. Assignment prefers globally-unused pairs, guarantees no two *live* repos share one, and excludes **Catppuccin** — a common global Ghostty default, i.e. what an unpainted window already looks like. Manual pins (`"pinned": true`) always win.
 - **Placement rules** (`repo → display role [+ grid]`): ordered, first match wins, `"*"` wildcard, default `* → main`. Roles are computed from live geometry each run: `main` is the focused display; externals sorted by x become `external.left` / `external.right`. A rule pointing at a missing role degrades gracefully (other external, then main) — so a three-display policy is still correct on a laptop in a café.
-- **Layout** (`minPaneWidth`, default 384px): a display with n panes gets `cols = min(n, ⌊width / 384⌋)` columns, rows to fit. That one number yields 5×1 on a 1920 external, 4×2 for eight panes on a 16″ MacBook — and a `place` pin overrides it per repo (ignored automatically if the repo outgrows the pinned grid).
+- **Layout** (`minPaneWidth`, default 384px; `minPaneHeight`, default 256px): under `organize`, a display with n panes gets `cols = min(n, ⌊width / 384⌋)` columns, rows to fit. That one number yields 5×1 on a 1920 external, 4×2 for eight panes on a 16″ MacBook — and a `place` pin overrides it per repo (ignored automatically if the repo outgrows the pinned grid).
+
+  `arrange` uses both floors and adds two rules. It splits each display along its **long axis** into one contiguous band per repo, sized by pane count — so a landscape display yields columns and a portrait one yields stacked rows, and a repo's panes always touch. Within a band it picks the grid whose panes sit closest to **9:16**, the geometric mean of every layout this project has historically tiled to: *a pane should be as portrait as the display is landscape*. Where the counts line up the result is pixel-identical to the old flat grid — two repos of four panes on a 16″ MacBook give two 2×2 blocks whose eight rects are exactly the old 4×2. Where they don't, you get cohesion instead of a repo split across a row edge.
+
+- **Auto-placement** (`repo → role`, `arrange` only): repos with no explicit rule are balanced across displays by how many readable panes each one holds — `⌊w/384⌋ × ⌊h/256⌋`, not area, because rotating a 1920×1080 to portrait leaves 312px of width no pane can use. The choice is remembered so repos don't hop displays between runs, and a display appearing or vanishing rebalances on its own.
 
 **3. Actuation.** All target windows are branded via their TTYs, captured as AX references *first*, then moved in one batch; palettes are written per-window as OSC sequences. Failures are per-window, reported, and never abort the batch.
 
@@ -123,7 +132,10 @@ Three layers, evaluated fresh on every run:
 
 | Command | Description |
 |---|---|
-| `seance organize` | Perceive every live pane, derive repo identity, assign colors, place by policy, tile, paint. Idempotent. |
+| `seance arrange` | Group every **active** (non-minimized) pane by repo, spread the repos across every connected display, tile each repo into a contiguous block shaped to suit that display, paint. Takes no grid — it picks one. Idempotent. |
+| `seance arrange <name>` | Apply a saved arrangement's placement rules for this run. Does not overwrite `placement`. |
+| `seance arrange --save <name>` | Record where the windows are right now as a named arrangement (repo → display role). **Moves nothing.** Drag things where you want them, then freeze it. |
+| `seance organize` | Perceive every live pane, derive repo identity, assign colors, place by policy, tile, paint. Idempotent. Unlike `arrange`, it obeys the `*` catch-all rule and pinned grids literally, and tiles minimized panes too. |
 | `seance organize <NxM> [--screen n] [--pin]` | Same, but force that grid instead of auto-grid — every display, or one with `--screen`. Transient by default; `--pin` writes the grid onto the affected repos' placement rules so it survives. Errors if a display's panes don't fit the shape. |
 | `seance organize auto` | Clear every pinned grid, then organize. |
 | `seance place <repo> <NxM> [--screen n]` | Tile the repo's panes now **and** pin `{display role, grid}` as its placement rule. `place <repo> auto` clears the grid pin. |
@@ -159,6 +171,9 @@ Install once (`seance alfred install`), then type **`s `** in Alfred:
 | You type | Item | Enter does |
 |---|---|---|
 | `s` | full menu | — |
+| `s arrange` | Arrange, plus every saved arrangement | full perceive → distribute → tile → paint |
+| `s arrange <name>` | Arrange *name* | apply that saved arrangement |
+| `s arrange save <name>` | Save arrangement "*name*" | freeze the current repo→display split, moving nothing |
 | `s org` | Organize | full perceive → place → paint |
 | `s org 3x2` / `s org 3x2 1` | Organize 3x2 (on display 1) | force that grid for this run |
 | `s help` | Cheatsheet | opens the how-to-use page in Alfred's Text View |
@@ -209,13 +224,22 @@ The 2.0 fields of `state.json`:
     { "repo": "myapp", "role": "external.left", "grid": { "cols": 2, "rows": 2 } },
     { "repo": "*", "role": "main" }
   ],
-  "layout": { "minPaneWidth": 384 },
+  "arrangements": {
+    "desk": [
+      { "repo": "myapp", "role": "external.left" },
+      { "repo": "*", "role": "main" }
+    ]
+  },
+  "autoPlacement": { "docs": "external.right" },
+  "layout": { "minPaneWidth": 384, "minPaneHeight": 256 },
   "appearance": "dark",
   "minContrast": 4.5
 }
 ```
 
-Everything here is safe to edit by hand; `organize` reads it fresh each run. Note what's *absent*: no TTYs, no window ids, no display ids, no coordinates — nothing that can go stale.
+`arrangements` are named alternatives to `placement`, same shape, applied only when you name one. `autoPlacement` is derived by `arrange` — which display each unpinned repo went to last time, so they don't shuffle — and is safe to delete if you want a clean rebalance.
+
+Everything here is safe to edit by hand; `arrange` and `organize` read it fresh each run. Note what's *absent*: no TTYs, no window ids, no display ids, no coordinates — nothing that can go stale.
 
 ## Environment variables
 
@@ -229,9 +253,11 @@ Everything here is safe to edit by hand; `organize` reads it fresh each run. Not
 
 ```
 src/
-├── cli.ts          commander wiring; organize/place/watch composition
+├── cli.ts          commander wiring; arrange/organize/place/watch composition
 ├── policy.ts       pure decision engine: repoOf, computeRoles, placePanes,
 │                   autoGrid, assignThemes — fully unit-tested, no I/O
+├── arrange.ts      pure engine behind `arrange`: chooseGrid, tileFill,
+│                   layoutScreen (repo bands), displayCapacity, assignFamilies
 ├── layouts.ts      pure rect math: (screen, NxM) → rect[]
 ├── themes.ts       theme pair registry + Ghostty theme file parser
 ├── state.ts        JSON persistence + policy seeding/migration
@@ -242,7 +268,7 @@ src/
 └── types.ts        shared types
 ```
 
-`policy.ts`, `layouts.ts`, `themes.ts`, `state.ts`, `groups.ts`, `save.ts` are pure and testable anywhere. `ghostty.ts` owns every shell-out.
+`policy.ts`, `arrange.ts`, `layouts.ts`, `themes.ts`, `state.ts`, `groups.ts`, `save.ts` are pure and testable anywhere. `ghostty.ts` owns every shell-out.
 
 ### How window targeting actually works
 

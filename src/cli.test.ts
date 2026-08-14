@@ -260,4 +260,60 @@ describe("seance CLI (black-box, SEANCE_HOME isolated)", () => {
       expect(r.stderr).toContain("between 0 and 21");
     });
   });
+
+  // These exercise only the paths that resolve before `arrange` perceives
+  // anything, so no AppleScript or TTY is touched.
+  async function writeState(dir: string, state: Record<string, unknown>): Promise<void> {
+    await fs.writeFile(
+      join(dir, "state.json"),
+      JSON.stringify({ version: 1, groups: {}, projects: {}, themes: {}, ...state }, null, 2),
+      "utf8",
+    );
+  }
+
+  const SEEDED = {
+    arrangements: { focus: [{ repo: "zeus", role: "main" }] },
+  };
+
+  it("arrange rejects an unknown arrangement and lists what is saved", async () => {
+    await withSeanceDir(async (dir) => {
+      const empty = await runSeance(["arrange", "nope"], dir);
+      expect(empty.exitCode).not.toBe(0);
+      expect(empty.stderr).toContain('no arrangement "nope"');
+      expect(empty.stderr).toContain("Saved: none");
+
+      await writeState(dir, SEEDED);
+      const seeded = await runSeance(["arrange", "nope"], dir);
+      expect(seeded.stderr).toContain("Saved: focus");
+    });
+  });
+
+  it("arrange rejects a name alongside --save", async () => {
+    await withSeanceDir(async (dir) => {
+      const r = await runSeance(["arrange", "foo", "--save", "bar"], dir);
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr).toContain("seance arrange --save <name>");
+    });
+  });
+
+  it("json query offers Arrange and every saved arrangement", async () => {
+    await withSeanceDir(async (dir) => {
+      await writeState(dir, SEEDED);
+      const r = await runSeance(["json", "query", "arrange"], dir);
+      expect(r.exitCode).toBe(0);
+      const args = (JSON.parse(r.stdout) as { items: Array<{ arg: string }> }).items.map(
+        (i) => i.arg,
+      );
+      expect(args).toContain("arrange");
+      expect(args).toContain("arrange focus");
+    });
+  });
+
+  it("json query turns \"arrange save X\" into the --save invocation", async () => {
+    await withSeanceDir(async (dir) => {
+      const r = await runSeance(["json", "query", "arrange save weekend"], dir);
+      const items = (JSON.parse(r.stdout) as { items: Array<{ arg: string }> }).items;
+      expect(items[0]!.arg).toBe("arrange --save weekend");
+    });
+  });
 });

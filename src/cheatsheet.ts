@@ -4,7 +4,9 @@ Panes organize themselves by repo. One verb does everything.
 
 ## Everyday
 
-- \`seance organize\` — perceive every pane, color by repo, place by policy, tile, paint. Idempotent, safe any time.
+- \`seance arrange\` — you figure it out: group every on-screen pane by repo, spread the repos across every display, shape each block to suit that display, paint. Skips minimized panes. Takes no grid.
+- \`seance arrange <name>\` — apply a saved arrangement. \`seance arrange --save <name>\` records where the windows are now, moving nothing.
+- \`seance organize\` — I want *this shape*: perceive every pane, color by repo, place by policy, tile, paint. Idempotent, safe any time.
 - \`seance organize <NxM> [--screen n] [--pin]\` — tile every pane into that shape for this run. \`--screen\` scopes it to one display; \`--pin\` remembers it.
 - \`seance organize auto\` — clear every pinned grid and re-organize.
 - \`seance place <repo> <NxM> [--screen n]\` — same, for one repo, and always pinned.
@@ -22,6 +24,7 @@ Panes organize themselves by repo. One verb does everything.
 
 ## Alfred palette — type \`s \`
 
+- \`s arrange\` — Arrange, plus every saved arrangement; \`s arrange save weekend\` freezes the current split
 - \`s org\` — Organize
 - \`s org 3x2\` — Organize into a 3x2 everywhere; \`s org 3x2 1\` for display 1 only
 - \`s myapp\` — Focus myapp, plus that repo's restores and resumable conversations by title
@@ -46,8 +49,8 @@ Logs: \`~/.config/seance/watcher.log\`. Remove with \`seance watch --uninstall\`
 **2. Policy** — the only persisted state:
 
 - **identity**: repo → theme pair, assigned on first sight and sticky. No two live repos share one.
-- **placement**: ordered rules, repo → display role (\`main\`, \`external.left\`, \`external.right\`), \`*\` wildcard, first match wins. Roles are computed from live geometry, so a three-display policy is still correct on a laptop.
-- **layout**: one number, \`minPaneWidth\` (384px) → \`cols = min(n, floor(width / 384))\`.
+- **placement**: ordered rules, repo → display role (\`main\`, \`external.left\`, \`external.right\`), \`*\` wildcard, first match wins. Roles are computed from live geometry, so a three-display policy is still correct on a laptop. \`arrange\` obeys per-repo rules but ignores \`*\`, otherwise the seeded catch-all would leave it nothing to balance.
+- **layout**: \`minPaneWidth\` (384px) and \`minPaneHeight\` (256px). \`organize\` uses the width alone (\`cols = min(n, floor(width / 384))\`); \`arrange\` uses both, picking the shape whose panes sit closest to 9:16 — a pane should be as portrait as the display is landscape, which is what makes a rotated display stack rows instead of slicing slivers.
 
 **3. Actuation.** Windows are branded via their TTYs, captured as Accessibility references first, then moved in one batch. Palettes are written per-window as OSC sequences, so five repos can sit side by side in five palettes.
 

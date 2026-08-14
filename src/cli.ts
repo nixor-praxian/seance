@@ -23,7 +23,16 @@ import {
   type LivePane,
   type PlacementRule,
   type PolicyScreen,
+  type Role,
 } from "./policy.js";
+import {
+  assignFamilies,
+  layoutScreen,
+  screenKeyForRect,
+  type FamilyRequest,
+  type PaneBudget,
+  type PlacementNote,
+} from "./arrange.js";
 import { CHEATSHEET } from "./cheatsheet.js";
 import { buildSaveScript } from "./save.js";
 import {
@@ -1034,6 +1043,31 @@ export async function run(argv: string[]): Promise<void> {
       });
     });
 
+  // ── arrange (automatic: perceive → distribute → tile → paint) ────
+  program
+    .command("arrange [name]")
+    .description(
+      "Group every active (non-minimized) pane by repo, spread the repos across every connected display, tile each one into a shape that suits that display, and paint. Takes no shape — use `organize` for that. `arrange <name>` applies a saved arrangement.",
+    )
+    .option("--save <name>", "record where the windows are now as a named arrangement, moving nothing")
+    .action(async (name: string | undefined, opts: { save?: string }) => {
+      const state = await loadState();
+      ensurePolicy(state);
+      if (name !== undefined && opts.save !== undefined) {
+        throw new Error('arrange --save takes the name itself: "seance arrange --save <name>"');
+      }
+      if (name !== undefined && !state.arrangements?.[name]) {
+        const known = Object.keys(state.arrangements ?? {}).sort();
+        throw new Error(
+          `no arrangement "${name}". Saved: ${known.length > 0 ? known.join(", ") : "none"}`,
+        );
+      }
+      await runArrange(state, {
+        ...(name !== undefined ? { name } : {}),
+        ...(opts.save !== undefined ? { save: opts.save } : {}),
+      });
+    });
+
   // ── place (imperative override, recorded as policy) ──────────────
   program
     .command("place <repo> <grid>")
@@ -1128,12 +1162,29 @@ export async function run(argv: string[]): Promise<void> {
 
       const items: PaletteItem[] = [
         {
+          uid: "arrange",
+          title: "Arrange",
+          subtitle: `group ${live.length} pane(s) by repo across every display, skip minimized`,
+          arg: "arrange",
+          match: "arrange auto tile layout reflow",
+        },
+        {
           uid: "organize",
           title: "Organize",
           subtitle: `perceive → place → paint ${live.length} pane(s) across ${byRepo.size} repo(s)`,
           arg: "organize",
         },
       ];
+      for (const [name, rules] of Object.entries(state.arrangements ?? {})) {
+        const pins = rules.filter((r) => r.repo !== "*").map((r) => `${r.repo}→${r.role}`);
+        items.push({
+          uid: `arrange-${name}`,
+          title: `Arrange ${name}`,
+          subtitle: pins.length > 0 ? pins.join(", ") : "all repos on main",
+          arg: `arrange ${name}`,
+          match: `arrange ${name} ${rules.map((r) => r.repo).join(" ")}`,
+        });
+      }
       for (const [repo, n] of [...byRepo.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
         const pair = state.identity?.[repo]?.pair;
         items.push({
@@ -1213,6 +1264,17 @@ export async function run(argv: string[]): Promise<void> {
             }
           }
         }
+      }
+
+      // "arrange save <name>" grammar: freeze the current repo→display split.
+      const am = /^arr(?:ange)?\s+save\s+(\S+)$/i.exec((query ?? "").trim());
+      if (am) {
+        filtered.unshift({
+          uid: "arrange-save",
+          title: `Save arrangement "${am[1]}"`,
+          subtitle: "record where the windows are now — moves nothing",
+          arg: `arrange --save ${am[1]}`,
+        });
       }
 
       // "org <grid> [display]" grammar: one shape for every pane this run.
@@ -1734,12 +1796,7 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
   await ghostty.activate();
   const { placed, stranded } = await ghostty.setWindowBounds(plans);
 
-  const appearance = state.appearance ?? (await ghostty.currentAppearance());
-  const paletteCache = new Map<string, ThemePalette>();
-  let painted = 0;
-  for (const p of live) {
-    if (await paintPane(state, p, appearance, paletteCache)) painted++;
-  }
+  const { painted, appearance } = await paintAll(state, live);
 
   await saveState(state);
 
@@ -1749,13 +1806,235 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
   if (pinTargets.size > 0) {
     console.log(`grid pinned ${override!.grid.cols}x${override!.grid.rows}: ${[...pinTargets.keys()].join(", ")}`);
   }
-  if (stranded.length > 0) {
-    const cmds = await ghostty.foregroundCommandsByTty(stranded);
-    console.log("stranded on another Space (bring over via Mission Control, then re-run):");
-    for (const t of stranded) {
-      console.log(`  ${t.replace(/^\/dev\//, "")}  ${repoByTty.get(t) ?? "?"}  ${cmds.get(t) ?? ""}`);
-    }
+  await reportStranded(stranded, repoByTty);
+}
+
+async function paintAll(
+  state: SeanceState,
+  live: WorldPane[],
+): Promise<{ painted: number; appearance: Appearance }> {
+  const appearance = state.appearance ?? (await ghostty.currentAppearance());
+  const paletteCache = new Map<string, ThemePalette>();
+  let painted = 0;
+  for (const p of live) {
+    if (await paintPane(state, p, appearance, paletteCache)) painted++;
   }
+  return { painted, appearance };
+}
+
+async function reportStranded(
+  stranded: string[],
+  repoByTty: Map<string, string>,
+): Promise<void> {
+  if (stranded.length === 0) return;
+  const cmds = await ghostty.foregroundCommandsByTty(stranded);
+  console.log("stranded on another Space (bring over via Mission Control, then re-run):");
+  for (const t of stranded) {
+    console.log(`  ${t.replace(/^\/dev\//, "")}  ${repoByTty.get(t) ?? "?"}  ${cmds.get(t) ?? ""}`);
+  }
+}
+
+interface ArrangeOptions {
+  /** Saved arrangement to apply instead of `state.placement`. */
+  name?: string;
+  /** Record the current repo→display split under this name; moves nothing. */
+  save?: string;
+}
+
+/**
+ * `arrange` differs from `organize` in what it decides rather than how it acts:
+ * it picks the display split and the shape itself, and it only tiles panes that
+ * are actually on screen.
+ *
+ * Note the asymmetry between `live` and `active`: identity assignment and
+ * painting run over every live pane (an OSC write reaches a minimized window's
+ * TTY fine, so it is already the right colour when restored), while only
+ * `active` panes get a rect.
+ */
+async function runArrange(state: SeanceState, opts: ArrangeOptions): Promise<void> {
+  const rules = opts.name !== undefined ? state.arrangements![opts.name]! : state.placement!;
+  const budget: PaneBudget = {
+    minPaneWidth: state.layout!.minPaneWidth,
+    minPaneHeight: state.layout!.minPaneHeight ?? 256,
+  };
+
+  const { live } = await perceiveWorld();
+  if (live.length === 0) {
+    console.log("no live Ghostty panes to arrange");
+    return;
+  }
+  const repoByTty = new Map(live.map((p) => [p.ttyPath, p.repo]));
+
+  const repos = [...new Set(live.map((p) => p.repo))];
+  const { identity, changes } = assignThemes(repos, state.identity ?? {}, themeRing(state));
+  state.identity = identity;
+
+  const screens = await ghostty.listScreens();
+  const policyScreens: PolicyScreen[] = screens.map((s) => ({
+    key: String(s.displayId),
+    rect: s.rect,
+    isMain: s.isMain,
+  }));
+  const roles = computeRoles(policyScreens);
+  const roleOf = new Map<string, Role>();
+  for (const [role, s] of roles) roleOf.set(s.key, role);
+
+  const { active, minimized } = await splitByVisibility(live);
+
+  if (opts.save !== undefined) {
+    await saveArrangement(state, opts.save, active, policyScreens, roleOf);
+    return;
+  }
+
+  const families = orderFamilies(active, rules);
+  const { byScreen, autoPlacement, notes } = assignFamilies(
+    families.map((f) => ({ repo: f.repo, count: f.panes.length })),
+    rules,
+    state.autoPlacement ?? {},
+    roles,
+    budget,
+  );
+  state.autoPlacement = autoPlacement;
+
+  const byRepo = new Map(families.map((f) => [f.repo, f]));
+  const plans: Array<{ ttyPath: string; rect: Rect; label?: string }> = [];
+  const summary: string[] = [];
+  for (const [key, { role, repos: reposOn }] of byScreen) {
+    const screen = policyScreens.find((s) => s.key === key)!;
+    const requests: FamilyRequest[] = reposOn.map((repo) => {
+      const pin = rules.find((r) => r.repo === repo)?.grid;
+      return { repo, count: byRepo.get(repo)!.panes.length, ...(pin ? { grid: pin } : {}) };
+    });
+    const placements = layoutScreen(screen.rect, requests, budget);
+    let panes = 0;
+    for (const placement of placements) {
+      const family = byRepo.get(placement.repo)!;
+      placement.cells.forEach((rect, i) => {
+        plans.push({ ttyPath: family.panes[i]!.ttyPath, rect, label: placement.repo });
+      });
+      panes += placement.cells.length;
+    }
+    const shapes = placements
+      .map((p) => `${p.repo} ${p.grid.cols}x${p.grid.rows}`)
+      .join(", ");
+    summary.push(`  ${role.padEnd(15)} ${String(panes).padStart(2)} pane(s)  ${shapes}`);
+  }
+
+  await ghostty.activate();
+  const { placed, stranded } = await ghostty.setWindowBounds(plans);
+
+  const { painted, appearance } = await paintAll(state, live);
+  await saveState(state);
+
+  for (const c of changes) {
+    console.log(`theme ${c.reason === "new" ? "assigned" : "reassigned"}: ${c.repo} → ${c.pair}`);
+  }
+  console.log(
+    `arranged ${placed.length}/${active.length} pane(s), painted ${painted} (${appearance})${opts.name !== undefined ? ` — arrangement "${opts.name}"` : ""}`,
+  );
+  for (const line of summary) console.log(line);
+  if (minimized.length > 0) {
+    const repoCounts = new Map<string, number>();
+    for (const p of minimized) repoCounts.set(p.repo, (repoCounts.get(p.repo) ?? 0) + 1);
+    const desc = [...repoCounts.entries()].map(([r, n]) => (n > 1 ? `${r}×${n}` : r)).join(", ");
+    console.log(`minimized (not tiled): ${desc}`);
+  }
+  for (const note of notes) console.log(formatNote(note));
+  await reportStranded(stranded, repoByTty);
+}
+
+/**
+ * Minimized panes must be excluded before the actuator runs, not after:
+ * setWindowBounds focuses each target to migrate it onto the current Space,
+ * which would undo the user's ⌘M.
+ *
+ * The AX read that resolves which pane is which costs a sentinel round trip and
+ * a title flash, so it is gated on a cheap process-wide check that answers "is
+ * anything minimized at all" — the answer is normally no.
+ */
+async function splitByVisibility(
+  live: WorldPane[],
+): Promise<{ active: WorldPane[]; minimized: WorldPane[] }> {
+  const windows = await ghostty.listAllWindows().catch(() => []);
+  if (!windows.some((w) => w.minimized)) return { active: live, minimized: [] };
+
+  const states = await ghostty.windowStatesByTty(
+    live.map((p) => ({ ttyPath: p.ttyPath, label: p.repo })),
+  );
+  const active: WorldPane[] = [];
+  const minimized: WorldPane[] = [];
+  for (const pane of live) {
+    // An unresolved sentinel means the window lost the title race or sits on
+    // another Space; setWindowBounds retries and migrates, so it resolves
+    // strictly better than this single-shot read. Only an explicit yes excludes.
+    if (states.get(pane.ttyPath)?.minimized === true) minimized.push(pane);
+    else active.push(pane);
+  }
+  return { active, minimized };
+}
+
+interface PaneFamily {
+  repo: string;
+  panes: WorldPane[];
+}
+
+function orderFamilies(panes: WorldPane[], rules: PlacementRule[]): PaneFamily[] {
+  const ruleIndex = (repo: string): number => {
+    const i = rules.findIndex((r) => r.repo === repo);
+    return i === -1 ? rules.length : i;
+  };
+  const byRepo = new Map<string, WorldPane[]>();
+  for (const pane of panes) {
+    const list = byRepo.get(pane.repo);
+    if (list) list.push(pane);
+    else byRepo.set(pane.repo, [pane]);
+  }
+  return [...byRepo.entries()]
+    .map(([repo, list]) => ({
+      repo,
+      panes: [...list].sort((a, b) => (a.ttyPath < b.ttyPath ? -1 : a.ttyPath > b.ttyPath ? 1 : 0)),
+    }))
+    .sort(
+      (a, b) =>
+        ruleIndex(a.repo) - ruleIndex(b.repo) ||
+        (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0),
+    );
+}
+
+async function saveArrangement(
+  state: SeanceState,
+  name: string,
+  active: WorldPane[],
+  screens: PolicyScreen[],
+  roleOf: Map<string, Role>,
+): Promise<void> {
+  const rects = await ghostty.currentRectsByTty(
+    active.map((p) => ({ ttyPath: p.ttyPath, label: p.repo })),
+  );
+  const roleByRepo = new Map<string, Role>();
+  for (const pane of active) {
+    const rect = rects.get(pane.ttyPath);
+    if (!rect || roleByRepo.has(pane.repo)) continue;
+    const role = roleOf.get(screenKeyForRect(rect, screens));
+    if (role) roleByRepo.set(pane.repo, role);
+  }
+  const rules: PlacementRule[] = [
+    ...[...roleByRepo.entries()].map(([repo, role]) => ({ repo, role })),
+    { repo: "*", role: "main" as Role },
+  ];
+  state.arrangements = { ...(state.arrangements ?? {}), [name]: rules };
+  await saveState(state);
+  const desc = [...roleByRepo.entries()].map(([repo, role]) => `${repo}→${role}`).join(", ");
+  console.log(`saved arrangement "${name}": ${desc || "no resolvable panes"}`);
+}
+
+function formatNote(note: PlacementNote): string {
+  if (note.kind === "over-capacity") {
+    return `  ${note.role}: ${note.panes} panes on a ${note.capacity}-pane display — panes are below the readable floor`;
+  }
+  const pinned = note.pinnedElsewhere;
+  if (pinned.length === 0) return `  ${note.role}: empty`;
+  return `  ${note.role}: empty — ${pinned.join(", ")} pinned elsewhere ("seance place <repo> auto" lets one balance)`;
 }
 
 const WATCHER_PLIST = "com.seance.watcher.plist";

@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parked sessions</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f5;
+    --card: #ffffff;
+    --line: #e4e4df;
+    --ink: #1b1b19;
+    --mute: #6b6b66;
+    --faint: #9a9a94;
+    --accent: #c4653a;
+    --btn-ink: #ffffff;
+    --shadow: 0 1px 2px rgba(0,0,0,.05);
+    --radius: 9px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a;
+      --card: #1f1f23;
+      --line: #2e2e34;
+      --ink: #ececea;
+      --mute: #9d9da3;
+      --faint: #6d6d75;
+      --accent: #e0824f;
+      --btn-ink: #17171a;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.45 ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 880px; margin: 0 auto; padding: 40px 20px 80px; }
+
+  header { margin-bottom: 22px; }
+  h1 { font-size: 19px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 4px; }
+  .sub { color: var(--mute); font-size: 13px; margin: 0; }
+
+  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 3px 1fr auto;
+    align-items: center;
+    gap: 14px;
+    padding: 0;
+    cursor: pointer;
+  }
+  .stripe { align-self: stretch; background: var(--tag, var(--faint)); }
+  .body { padding: 11px 0; min-width: 0; }
+  .top { display: flex; align-items: baseline; gap: 9px; flex-wrap: nowrap; }
+  .name { font-weight: 600; font-size: 14px; letter-spacing: -.005em; white-space: nowrap; }
+  .meta {
+    color: var(--faint);
+    font-size: 11.5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .when { color: var(--faint); font-size: 11.5px; margin-left: auto; padding-left: 10px; white-space: nowrap; }
+  .headline {
+    color: var(--mute);
+    font-size: 13px;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card.open .headline { white-space: normal; }
+  .actions { display: flex; align-items: center; gap: 8px; padding-right: 12px; }
+
+  button {
+    font: inherit;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--mute);
+    cursor: pointer;
+    padding: 5px 9px;
+    font-size: 12px;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  button:hover { color: var(--ink); border-color: var(--faint); }
+  .go {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--btn-ink);
+    font-weight: 600;
+    padding: 5px 13px;
+  }
+  .go:hover { filter: brightness(1.06); color: var(--btn-ink); border-color: var(--accent); }
+  .go[disabled] { opacity: .45; cursor: default; filter: none; }
+  .chev { color: var(--faint); font-size: 11px; padding: 5px 7px; border-color: transparent; }
+  .card.open .chev { transform: rotate(180deg); }
+
+  .detail { display: none; padding: 0 16px 14px 17px; border-top: 1px solid var(--line); margin-top: -1px; }
+  .card.open .detail { display: block; }
+  .detail dl { margin: 0; display: grid; grid-template-columns: 84px 1fr; gap: 4px 14px; padding-top: 12px; }
+  .detail dt { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding-top: 2px; }
+  .detail dd { margin: 0; color: var(--mute); }
+  .detail dd.next { color: var(--ink); }
+  .cmd {
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 6px 6px 10px;
+  }
+  .cmd code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+    color: var(--mute);
+    overflow-x: auto;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .flag {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--mute);
+    border-left: 2px solid var(--accent);
+    padding-left: 10px;
+  }
+  .gone { color: var(--accent); font-size: 11.5px; }
+  #toast {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    transform: translate(-50%, 14px);
+    background: var(--ink);
+    color: var(--bg);
+    padding: 8px 15px;
+    border-radius: 7px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s, transform .18s;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Parked sessions</h1>
+    <p class="sub">Click a card to see where it stopped. <strong>Resume</strong> opens a Ghostty window in the right directory and picks the thread back up.</p>
+  </header>
+  <ul id="list"></ul>
+</main>
+<div id="toast"></div>
+
+<script>
+const TAGS = {
+  zeus: '#c4653a', meshuga: '#7b8c4a', limpression: '#3f7d8c',
+  argus: '#4a5d9e', 'boat-bot': '#2f8f7a', toolkit: '#8a6aa8',
+  climacool: '#b8823a', spark: '#a05a7a'
+};
+
+const ago = ts => {
+  if (!ts) return '';
+  const h = (Date.now() / 1000 - ts) / 3600;
+  if (h < 1) return 'just now';
+  if (h < 24) return `${Math.round(h)}h ago`;
+  const d = Math.round(h / 24);
+  return d === 1 ? 'yesterday' : `${d}d ago`;
+};
+
+const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+let toastTimer;
+const toast = msg => {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+};
+
+fetch('/api/sessions').then(r => r.json()).then(sessions => {
+  document.getElementById('list').innerHTML = sessions.map((s, i) => `
+    <li class="card" style="--tag:${TAGS[s.tag] || 'var(--faint)'}">
+      <div class="row" data-toggle>
+        <div class="stripe"></div>
+        <div class="body">
+          <div class="top">
+            <span class="name">${esc(s.name)}</span>
+            <span class="meta">${esc(s.repo)}${s.branch ? ' · ' + esc(s.branch) : ''}</span>
+            <span class="when">${s.exists ? ago(s.last_active) : '<span class="gone">no transcript</span>'}</span>
+          </div>
+          <div class="headline">${esc(s.headline)}</div>
+        </div>
+        <div class="actions">
+          <button class="go" data-go="${i}" ${s.exists ? '' : 'disabled'}>Resume</button>
+          <button class="chev" data-toggle>&#9662;</button>
+        </div>
+      </div>
+      <div class="detail">
+        <dl>
+          <dt>Context</dt><dd>${esc(s.about)}</dd>
+          <dt>Stopped at</dt><dd>${esc(s.stopped_at)}</dd>
+          <dt>Next</dt><dd class="next">${esc(s.next)}</dd>
+        </dl>
+        ${s.note ? `<p class="flag">${esc(s.note)}</p>` : ''}
+        <div class="cmd">
+          <code>${esc(s.command)}</code>
+          <button data-copy="${esc(s.command)}">Copy</button>
+        </div>
+      </div>
+    </li>`).join('');
+});
+
+document.addEventListener('click', async e => {
+  const go = e.target.closest('[data-go]');
+  if (go) {
+    e.stopPropagation();
+    go.disabled = true;
+    const label = go.textContent;
+    go.textContent = 'Opening…';
+    try {
+      const r = await fetch('/api/launch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ index: Number(go.dataset.go) })
+      });
+      const data = await r.json();
+      toast(r.ok ? `Resuming ${data.launched}` : `Failed: ${data.error}`);
+    } catch (err) {
+      toast('Server unreachable — is serve.py still running?');
+    }
+    go.textContent = label;
+    go.disabled = false;
+    return;
+  }
+
+  const copy = e.target.closest('[data-copy]');
+  if (copy) {
+    e.stopPropagation();
+    await navigator.clipboard.writeText(copy.dataset.copy);
+    toast('Command copied');
+    return;
+  }
+
+  const toggle = e.target.closest('[data-toggle]');
+  if (toggle) toggle.closest('.card').classList.toggle('open');
+});
+</script>
+</body>
+</html>

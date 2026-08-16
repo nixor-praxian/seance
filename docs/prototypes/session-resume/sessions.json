@@ -1,0 +1,111 @@
+[
+  {
+    "id": "7ccc50ba-44dc-47b1-8e7a-520b0ea55620",
+    "name": "Zeus — options numbers layer",
+    "tag": "zeus",
+    "cwd": "/Users/node/GitHub/zeus",
+    "repo": "zeus",
+    "branch": "feat/options-analytics-numbers",
+    "headline": "Verification report of the options analytics landed, incl. an ASD-STE100 copy.",
+    "about": "Built the deterministic numbers layer for the options-flow-advisor skill — break-evens and the move to them, extrinsic, theta in $/day and the daily drift it demands, delta exposure, bounded max loss. Then a deep-research pass verified every formula against primary sources, and the report was rewritten a second time in ASD-STE100 controlled language.",
+    "stopped_at": "Committed docs/research/options-analytics-verification-ste100.md — 201 descriptive sentences, all STE checks green.",
+    "next": "Branch is clean at ba85e06. Decide whether it merges, or keep extending the numbers layer."
+  },
+  {
+    "id": "a4424561-e58d-4b31-ae76-2aad2c2a0592",
+    "name": "Meshuga — summer menu into Lightspeed",
+    "tag": "meshuga",
+    "cwd": "/Users/node/GitHub/meshuga",
+    "repo": "meshuga",
+    "branch": "summer-menu",
+    "headline": "Reconciling the Google Sheet, the till and the validated card — mid-audit.",
+    "about": "Capturing the summer 2026 lunch/dinner menus, the 50 CHF group combo, and the new photography into the item database, then pushing it to the K-Series till. Three live tabs backed up pre-combos and exported to the repo; nothing live overwritten.",
+    "stopped_at": "First reconciliation done: the Sheet holds 202 SKU / 180 active, the till 238 item cards, 48 till-only SKU in four groups. Confirmed the item CSV export silently omits deactivated items — 20702/3/4 were never deleted. Carte (live, 39 CUISINE items) and Carte 2.0 (draft, 27) have diverged.",
+    "next": "Two defects remain in Carte 2.0, starting with the PAIN screen. Then finish the Sheet-vs-till merge."
+  },
+  {
+    "id": "7da21188-56d0-435e-92f2-570c523dc208",
+    "name": "PKB — Meshuga reporting interviews",
+    "tag": "meshuga",
+    "cwd": "/Users/node/GitHub/meshuga",
+    "repo": "meshuga (KB)",
+    "branch": "docs/meshuga-reporting",
+    "headline": "The chef wants a pre-service push, not Raoul's weekly retro — two different products.",
+    "about": "Processing the reporting conversations into the knowledge base to feed what zeus is building: Raoul's reporting call plus his voice note on table dwell time (arrival, table open, close, bill request), then the on-site session with Guillaume and chef Umberto Costanzo.",
+    "stopped_at": "Both records written under events/. Committed to a dedicated docs/meshuga-reporting branch via a throwaway worktree, so the zeus checkout never moved.",
+    "next": "Fold the finding — retrospective vs. 11h pre-service push — into the zeus reporting capability spec."
+  },
+  {
+    "id": "67488f17-0fbb-4ad2-a6b3-5220659e362c",
+    "name": "L'Impression — anti-spam on the contact form",
+    "tag": "limpression",
+    "cwd": "/Users/node/GitHub/limpression-cafe",
+    "repo": "limpression-cafe",
+    "branch": "feat/turnstile-anti-spam",
+    "headline": "Two spam levers shipped on a branch, not merged — they need your keys.",
+    "about": "Started as the weekly menu sync, comparing the Lightspeed richitem API against the newsletter. Turned into the personal-inbox spam question: what measures are actually in place, whether a captcha is needed, why the other sites are unaffected.",
+    "stopped_at": "Pushed 292bdae. ORIGIN_STRICT=1 rejects a POST with no real Origin header — all 12 logged spams forge Referer and send none, all 4 genuine submissions sent it. Turnstile is wired end to end, off by default, and fails open so a Cloudflare outage can never close the form.",
+    "next": "Add the Turnstile keys, flip ORIGIN_STRICT on, then merge. site/.env.example is gitignored, so that edit is local only."
+  },
+  {
+    "id": "ca83252d-6054-4085-a9a0-f629ea3757a2",
+    "name": "Argus — mobile UI and PWA shell",
+    "tag": "argus",
+    "cwd": "/Users/node/GitHub/Argus",
+    "repo": "Argus",
+    "branch": "feat/mobile-bottom-nav",
+    "headline": "Deployed to the Spark at c9102b8 — safe-area insets still unverified.",
+    "about": "The Positions header ate too much of the mobile viewport. Led to a bottom nav (four slots plus a + for More), uniform icon sizing, a regenerated apple-touch-icon, and viewport-fit=cover safe-area handling.",
+    "stopped_at": "Five commits deployed and verified as served. env(safe-area-inset-*) only returns real values in standalone mode, so nothing about the insets or the home-screen icon has actually been tested.",
+    "next": "Delete the old home-screen entry, re-add from Safari, then check the icon, the insets and the bottom bar. 899b9d8 is isolated and revertable on its own.",
+    "note": "The ID you listed (0f03052d…) is an empty /remote-control bridge stub — 7 records, no conversation. This is the real session."
+  },
+  {
+    "id": "6452559e-cd4c-4cde-9f88-a74032fa1af7",
+    "name": "Boat Bot — document pipeline and auth",
+    "tag": "boat-bot",
+    "cwd": "/Users/node/GitHub/boat-bot",
+    "repo": "boat-bot",
+    "branch": "main",
+    "headline": "Tasks 1–5 done and reviewed clean. 6–7 are blocked on credentials only you hold.",
+    "about": "Widening the scope past the dashboard photo to the other tabs — Essence, Frais & Accessoires, Documents — plus the auth design: email + password, Apple (with private relay), Google, invite-only for the alpha, and offline-visible persisted data with keychain storage on iOS.",
+    "stopped_at": "Both branches merged into local main, 134 Python tests green. The Linux lane builds and tests green for the first time — identical counts to macOS. Nothing pushed.",
+    "next": "Hand over the credentials for tasks 6–7, then push."
+  },
+  {
+    "id": "e627fda3-eb68-4a40-b573-dd90c54317bb",
+    "name": "Claude Toolkit — restaurant-operations skill",
+    "tag": "toolkit",
+    "cwd": "/Users/node/GitHub/claude-toolkit",
+    "repo": "claude-toolkit",
+    "branch": "main",
+    "headline": "All four Wave 1 ledgers came back NOT CLEAN — and the verification is self-referential.",
+    "about": "Wave 1 of the restaurant-operations skill build: jurisdiction ledgers for eu-harmonized, fr, ch-cantonal and ch-federal, each verified by its own agent.",
+    "stopped_at": "The harder finding is the second one: everything checked so far is ledgers against ledgers and ledgers against git history. SKILL.md has not changed since 9649395, before Wave 1 began. There is no references/_ledger.md and no eval set.",
+    "next": "2,570 lines across 14 planning docs and no front door. Build the eval set and a copy-pasteable resume prompt before more ledger work."
+  },
+  {
+    "id": "dacb57e3-933e-4b44-86d9-a1334c4702dc",
+    "name": "Climacool — AC rental opportunity",
+    "tag": "climacool",
+    "cwd": "/Users/node/GitHub",
+    "repo": "— (no repo, /Users/node/GitHub)",
+    "branch": "",
+    "headline": "Six-wave validation plan built. Everything hangs on turns per unit per season.",
+    "about": "Assessing a rental-and-resale business for air conditioning units in French-speaking Switzerland, off the back of a record heatwave year. Started by reviewing the evaluation prompt for blind spots.",
+    "stopped_at": "The Climloc reference case fell apart under the registry: SAS registered 1 June 2026, EUR 1,000 capital, zero declared headcount, no accounts filed. The EUR 1M and EUR 100k/day figures are unaudited founder claims, and there are allegations the operation was retail arbitrage rather than rental.",
+    "next": "Wave 0 is free and runs this week: mystery-shop Louermaclim for ten units Monday, quote-only B2B prices from Climatlocation and CVC Systems, and send the supplier enquiries now. Below 3.5 turns per unit per season there is no business."
+  },
+  {
+    "id": "541e99c5-235f-4bed-9368-50f68ff0f249",
+    "name": "Spark — remote access after the disconnect",
+    "tag": "spark",
+    "cwd": "/Users/node/GitHub",
+    "repo": "— (no repo, /Users/node/GitHub)",
+    "branch": "",
+    "headline": "Spark reachable again via sparkt. Open question is the iOS client.",
+    "about": "Began as an investigation into why the pipe to the DGX Spark broke, ended with a working one-word reconnect (sparkt in Ghostty) and the whole procedure documented in the Obsidian PK Notes vault, plus a companion doc for phone access.",
+    "stopped_at": "Termius account deleted, so the phone doc needs a new client. a-Shell ships no ssh at all. Secure ShellFish is the recommendation — no account, iCloud Keychain sync, one-time purchase, mounts the box in Files. iSH is the free-forever fallback.",
+    "next": "Pick the client, then rewrite the phone-access doc around it."
+  }
+]

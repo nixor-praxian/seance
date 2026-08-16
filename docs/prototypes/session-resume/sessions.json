@@ -1,0 +1,111 @@
+[
+  {
+    "id": "0a1b2c3d-1111-4a01-9c01-000000000001",
+    "name": "Zephyr — options numbers layer",
+    "tag": "zephyr",
+    "cwd": "/Users/dev/GitHub/zephyr",
+    "repo": "zephyr",
+    "branch": "feat/options-analytics-numbers",
+    "headline": "Verification report of the options analytics landed, incl. a controlled-language copy.",
+    "about": "Built the deterministic numbers layer for the options advisor — break-evens and the move to them, extrinsic, theta in $/day and the daily drift it demands, delta exposure, bounded max loss. A research pass then verified every formula against primary sources.",
+    "stopped_at": "Committed docs/research/options-analytics-verification.md — 201 descriptive sentences, all style checks green.",
+    "next": "Branch is clean. Decide whether it merges, or keep extending the numbers layer."
+  },
+  {
+    "id": "0a1b2c3d-2222-4a02-9c02-000000000002",
+    "name": "Mercury — seasonal menu into the POS",
+    "tag": "mercury",
+    "cwd": "/Users/dev/GitHub/mercury",
+    "repo": "mercury",
+    "branch": "seasonal-menu",
+    "headline": "Reconciling the spreadsheet, the till and the validated card — mid-audit.",
+    "about": "Capturing the seasonal lunch and dinner menus into the item database, then pushing to the POS. Three live tabs backed up before the change and exported to the repo; nothing live overwritten.",
+    "stopped_at": "First reconciliation done: the sheet holds 202 SKU / 180 active, the till 238 item cards, 48 till-only SKU in four groups. Confirmed the item CSV export silently omits deactivated items.",
+    "next": "Two defects remain in the draft card. Then finish the sheet-vs-till merge."
+  },
+  {
+    "id": "0a1b2c3d-3333-4a03-9c03-000000000003",
+    "name": "KB — Mercury reporting interviews",
+    "tag": "mercury",
+    "cwd": "/Users/dev/GitHub/mercury",
+    "repo": "mercury (KB)",
+    "branch": "docs/reporting",
+    "headline": "Operations wants a pre-service push, not a weekly retro — two different products.",
+    "about": "Processing the reporting conversations into the knowledge base to feed what zephyr is building: the reporting call plus the voice note on table dwell time (arrival, table open, close, bill request), then the on-site session.",
+    "stopped_at": "Both records written under events/. Committed to a dedicated docs/reporting branch via a throwaway worktree, so the zephyr checkout never moved.",
+    "next": "Fold the finding — retrospective vs. pre-service push — into the zephyr reporting capability spec."
+  },
+  {
+    "id": "0a1b2c3d-4444-4a04-9c04-000000000004",
+    "name": "Lantern — anti-spam on the contact form",
+    "tag": "lantern",
+    "cwd": "/Users/dev/GitHub/lantern-cafe",
+    "repo": "lantern-cafe",
+    "branch": "feat/captcha-anti-spam",
+    "headline": "Two spam levers shipped on a branch, not merged — they need your keys.",
+    "about": "Started as the weekly menu sync, comparing the POS item API against the newsletter. Turned into the inbox spam question: what measures are in place, whether a captcha is needed, why the other sites are unaffected.",
+    "stopped_at": "Strict origin checking rejects a POST with no real Origin header — every logged spam forges Referer and sends none, every genuine submission sent it. The captcha is wired end to end, off by default, and fails open so a provider outage can never close the form.",
+    "next": "Add the captcha keys, flip strict origin on, then merge. The env example file is gitignored, so that edit is local only."
+  },
+  {
+    "id": "0a1b2c3d-5555-4a05-9c05-000000000005",
+    "name": "Beacon — mobile UI and PWA shell",
+    "tag": "beacon",
+    "cwd": "/Users/dev/GitHub/beacon",
+    "repo": "beacon",
+    "branch": "feat/mobile-bottom-nav",
+    "headline": "Deployed — safe-area insets still unverified.",
+    "about": "The header ate too much of the mobile viewport. Led to a bottom nav (four slots plus a + for More), uniform icon sizing, a regenerated touch icon, and viewport-fit=cover safe-area handling.",
+    "stopped_at": "Five commits deployed and verified as served. env(safe-area-inset-*) only returns real values in standalone mode, so nothing about the insets or the home-screen icon has actually been tested.",
+    "next": "Delete the old home-screen entry, re-add from the browser, then check the icon, the insets and the bottom bar. The last commit is isolated and revertable on its own.",
+    "note": "The ID listed first is an empty bridge stub — 7 records, no conversation. This is the real session."
+  },
+  {
+    "id": "0a1b2c3d-6666-4a06-9c06-000000000006",
+    "name": "Harbor Bot — document pipeline and auth",
+    "tag": "harbor-bot",
+    "cwd": "/Users/dev/GitHub/harbor-bot",
+    "repo": "harbor-bot",
+    "branch": "main",
+    "headline": "Tasks 1-5 done and reviewed clean. 6-7 are blocked on credentials only you hold.",
+    "about": "Widening the scope past the dashboard photo to the other tabs, plus the auth design: email and password, platform sign-in with private relay, invite-only for the alpha, and offline-visible persisted data with keychain storage.",
+    "stopped_at": "Both branches merged into local main, 134 tests green. The Linux lane builds and tests green for the first time — identical counts to macOS. Nothing pushed.",
+    "next": "Hand over the credentials for tasks 6-7, then push."
+  },
+  {
+    "id": "0a1b2c3d-7777-4a07-9c07-000000000007",
+    "name": "Toolkit — operations skill, wave 1",
+    "tag": "toolkit",
+    "cwd": "/Users/dev/GitHub/cobalt-toolkit",
+    "repo": "cobalt-toolkit",
+    "branch": "main",
+    "headline": "All four wave 1 ledgers came back NOT CLEAN — and the verification is self-referential.",
+    "about": "Wave 1 of the operations skill build: four jurisdiction ledgers, each verified by its own agent.",
+    "stopped_at": "The harder finding is the second one: everything checked so far is ledgers against ledgers and ledgers against git history. The skill entry point has not changed since before wave 1 began. There is no ledger index and no eval set.",
+    "next": "2,570 lines across 14 planning docs and no front door. Build the eval set and a copy-pasteable resume prompt before more ledger work."
+  },
+  {
+    "id": "0a1b2c3d-8888-4a08-9c08-000000000008",
+    "name": "Chillbox — equipment rental opportunity",
+    "tag": "chillbox",
+    "cwd": "/Users/dev/GitHub",
+    "repo": "- (no repo, ~/GitHub)",
+    "branch": "",
+    "headline": "Six-wave validation plan built. Everything hangs on turns per unit per season.",
+    "about": "Assessing a rental-and-resale business for seasonal cooling equipment, off the back of a record heatwave year. Started by reviewing the evaluation prompt for blind spots.",
+    "stopped_at": "The headline reference case did not survive a registry check: recently incorporated, minimal capital, zero declared headcount, no accounts filed. The revenue figures circulating are unaudited founder claims.",
+    "next": "Wave 0 is free and runs this week: mystery-shop the incumbents, collect quote-only B2B prices, and send the supplier enquiries now. Below 3.5 turns per unit per season there is no business."
+  },
+  {
+    "id": "0a1b2c3d-9999-4a09-9c09-000000000009",
+    "name": "Forge — remote access after the disconnect",
+    "tag": "forge",
+    "cwd": "/Users/dev/GitHub",
+    "repo": "- (no repo, ~/GitHub)",
+    "branch": "",
+    "headline": "Box reachable again via a one-word alias. Open question is the phone client.",
+    "about": "Began as an investigation into why the pipe to the build box broke, ended with a working one-word reconnect in Ghostty and the whole procedure documented, plus a companion doc for phone access.",
+    "stopped_at": "The previous phone client account was deleted, so that doc needs a new one. The shortlisted replacement needs no account, syncs via the platform keychain, is a one-time purchase, and mounts the box in Files.",
+    "next": "Pick the client, then rewrite the phone-access doc around it."
+  }
+]

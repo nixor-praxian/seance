@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,6 +27,23 @@ MANIFEST = HERE / "sessions.json"
 PAGE = HERE / "index.html"
 PROJECTS = Path.home() / ".claude" / "projects"
 GHOSTTY = Path("/Applications/Ghostty.app")
+GHOSTTY_BUNDLE_ID = "com.mitchellh.ghostty"
+
+# Per-session variables that must never reach a restored conversation. If this
+# server is started from inside a Claude Code session — the normal way, since
+# that's where you notice a session worth parking — its environment carries
+# them. CLAUDE_CODE_CHILD_SESSION marks a process as a nested session and turns
+# transcript saving off, so a conversation restored under it can start a
+# successor that is never written to ~/.claude/projects and can never be
+# resumed again. The rest name a session and a bridge socket that are dead by
+# the time anything reads them.
+INHERITED_MARKERS = (
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_BRIDGE_SESSION_ID",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+)
 
 
 def project_dir(cwd: str) -> Path:
@@ -65,19 +83,66 @@ def load_sessions() -> list[dict]:
     return sessions
 
 
+def as_applescript_string(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def ghostty_running() -> bool:
+    return (
+        subprocess.run(
+            ["pgrep", "-f", "Ghostty.app/Contents/MacOS/"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode
+        == 0
+    )
+
+
+def ensure_ghostty() -> None:
+    """Cold start only. `open -a` without -n reuses a running instance."""
+    if ghostty_running():
+        return
+    subprocess.run(["open", "-a", str(GHOSTTY)], check=True)
+    for _ in range(60):
+        time.sleep(0.1)
+        if ghostty_running():
+            return
+    raise RuntimeError("Ghostty did not come up")
+
+
 def launch(session: dict) -> None:
-    inner = f"cd {json.dumps(session['cwd'])} && exec claude --resume {session['id']}"
+    """Open the session in a new window of the *running* Ghostty instance.
+
+    Never `open -na`: -n means "new instance even if one is running", so every
+    click started another whole Ghostty process. Beyond the clutter, windows in
+    those extra instances belong to a different pid, which puts them out of
+    reach of anything that addresses one "Ghostty" process — seance's AX
+    scripts resolve a single pid and silently never see them.
+
+    `open -a` alone is not the fix: --args are only honoured on a cold launch,
+    so on an already-running Ghostty it would activate the app and drop the
+    command. Ghostty 1.3's scripting dictionary is what makes a window in the
+    instance that already exists.
+    """
+    ensure_ghostty()
+    # Routing through the running instance already leaves this server's
+    # environment behind — Ghostty was started by launchd, not by us. The
+    # explicit unset keeps that true even if Ghostty itself was ever launched
+    # from a marked shell, which costs nothing and is not obvious from here.
+    scrub = f"unset {' '.join(INHERITED_MARKERS)}; "
+    inner = f"{scrub}cd {json.dumps(session['cwd'])} && exec claude --resume {session['id']}"
+    # A record literal with only the fields we mean: `new surface configuration`
+    # materialises an empty command and the surface fails to initialise.
+    configuration = (
+        f"{{initial working directory:{as_applescript_string(session['cwd'])}, "
+        f"initial input:{as_applescript_string(inner)} & linefeed}}"
+    )
     subprocess.run(
         [
-            "open",
-            "-na",
-            str(GHOSTTY),
-            "--args",
-            f"--working-directory={session['cwd']}",
+            "osascript",
             "-e",
-            "zsh",
-            "-lc",
-            inner,
+            f'tell application id "{GHOSTTY_BUNDLE_ID}" to '
+            f"new window with configuration {configuration}",
         ],
         check=True,
     )

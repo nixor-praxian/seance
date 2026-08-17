@@ -6,3 +6,8 @@ dist/
 .env.local
 coverage/
 .vitest-cache/
+
+# the Python prototype under docs/prototypes/
+__pycache__/
+*.pyc
+.ruff_cache/

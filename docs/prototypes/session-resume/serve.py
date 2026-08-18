@@ -8,7 +8,22 @@ opens a fresh Ghostty window in that session's working directory and runs
 Binds 127.0.0.1 only. The session id is never taken from the request body — the
 request carries an index into sessions.json, and the id comes from the manifest.
 
-    python3 tools/session-resume/serve.py [--port 7788] [--no-open]
+    python3 serve.py [--port 7788] [--no-open]
+
+Status: throwaway evidence, superseded by ../../resume.md, which is the design
+that ships. Not a component of seance. Three things to know before running it:
+
+- The manifest is HAND-WRITTEN. `sessions.json` lists nine conversations
+  captured on 2026-08-14; it does not enumerate anything. Entries go stale, and
+  several of those sessions may already be open.
+- There is NO DE-DUPLICATION. Clicking a card whose session is already running
+  starts a second `claude --resume` on the same transcript — observed for
+  a4424561. `~/.claude/bin/ccresume.sh` shows the guard: look for a live process
+  matching the id and focus that window instead of spawning.
+- The project-directory slug is WRONG here. `project_dir()` maps cwd with
+  `cwd.replace("/", "-")`, but Claude Code also replaces `.`, so any cwd
+  containing a dot resolves to a path that does not exist. `projectDirNameForCwd`
+  in `src/sessions.ts` gets this right; this prototype does not.
 """
 
 import argparse

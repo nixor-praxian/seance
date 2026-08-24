@@ -1295,11 +1295,13 @@ export async function run(argv: string[]): Promise<void> {
         });
       }
 
-      // "<repo> <grid> [display]" grammar: "zeus 3x3 1", "zeus 3x3 display 1",
-      // "zeus auto". Matches by repo prefix so "zeu 3x3 1" works too.
-      const m = /^(\S+)\s+(\d+\s*x\s*\d+|auto)(?:\s+(?:display\s*|d)?(\d+))?$/i.exec(
-        (query ?? "").trim(),
-      );
+      // "[verb] <repo> <grid> [display]" grammar: "zeus 3x3 1", "zeus 3x3
+      // display 1", "zeus auto", and the same with a redundant "organize"/
+      // "place" in front. Matches by repo prefix so "zeu 3x3 1" works too.
+      const m =
+        /^(?:(?:org(?:anize)?|place)\s+)?(\S+)\s+(\d+\s*x\s*\d+|auto)(?:\s+(?:display\s*|d)?(\d+))?$/i.exec(
+          (query ?? "").trim(),
+        );
       if (m) {
         const repo = [...byRepo.keys()].find((r) => r.startsWith(m[1]!.toLowerCase()));
         if (repo) {

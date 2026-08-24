@@ -28,7 +28,7 @@ Panes organize themselves by repo. One verb does everything.
 - \`s org\` — Organize
 - \`s org 3x2\` — Organize into a 3x2 everywhere; \`s org 3x2 1\` for display 1 only
 - \`s myapp\` — Focus myapp, plus that repo's restores and resumable conversations by title
-- \`s myapp 3x2 1\` — Place myapp 3x2 on display 1. Repos prefix-match, so \`s mya 3x2\` works
+- \`s myapp 3x2 1\` — Place myapp 3x2 on display 1. Repos prefix-match, so \`s mya 3x2\` works, and a leading \`organize\`/\`place\` is ignored
 - \`s myapp auto\` — clear the grid pin
 - \`s dark\` — Appearance dark
 - \`s save\` / \`s restore\` — snapshot the workspace / respawn missing panes

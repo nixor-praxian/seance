@@ -14,7 +14,7 @@ import {
 
 describe("projectDirNameForCwd", () => {
   it("replaces every slash with a dash", () => {
-    expect(projectDirNameForCwd("/Users/dev/GitHub/seance")).toBe("-Users-node-GitHub-seance");
+    expect(projectDirNameForCwd("/Users/dev/GitHub/seance")).toBe("-Users-dev-GitHub-seance");
   });
 
   it("replaces dots as well as slashes", () => {

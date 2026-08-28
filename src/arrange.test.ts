@@ -362,7 +362,7 @@ describe("assignFamilies", () => {
     ["mercury", 3],
     ["zephyr", 2],
     ["seance", 4],
-    ["marble", 2],
+    ["maple", 2],
     ["kestrel", 1],
     ["home", 1],
   );
@@ -376,7 +376,7 @@ describe("assignFamilies", () => {
   it("honours explicit pins and balances the rest by fill ratio", () => {
     const { byScreen } = assignFamilies(LIVE_RIG, PINS, {}, roles, BUDGET);
     expect(byScreen.get("l")!.repos).toEqual(["mercury", "zephyr", "seance"]);
-    expect(byScreen.get("r")!.repos).toEqual(["marble"]);
+    expect(byScreen.get("r")!.repos).toEqual(["maple"]);
     expect(byScreen.get("m")!.repos).toEqual(["kestrel", "home"]);
   });
 

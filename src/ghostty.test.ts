@@ -29,7 +29,7 @@ describe("looksLikeShellDefaultTitle", () => {
 
   it("preserves meaningful titles", () => {
     expect(looksLikeShellDefaultTitle("Claude Code — debugging save")).toBe(false);
-    expect(looksLikeShellDefaultTitle("✳ Integrate ivy with zephyr")).toBe(false);
-    expect(looksLikeShellDefaultTitle("marble dev server")).toBe(false);
+    expect(looksLikeShellDefaultTitle("✳ Integrate aspen with zephyr")).toBe(false);
+    expect(looksLikeShellDefaultTitle("maple dev server")).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  growGridToFit,
   parseGrid,
   parseCustomColumns,
   tileGrid,
@@ -10,6 +11,20 @@ import {
 import type { Rect } from "./types.js";
 
 const screen: Rect = { x: 0, y: 0, width: 1000, height: 800 };
+
+describe("growGridToFit", () => {
+  it("leaves a grid that already holds the panes alone", () => {
+    expect(growGridToFit({ cols: 3, rows: 2 }, 5)).toEqual({ cols: 3, rows: 2 });
+    expect(growGridToFit({ cols: 5, rows: 1 }, 5)).toEqual({ cols: 5, rows: 1 });
+    expect(growGridToFit({ cols: 4, rows: 1 }, 1)).toEqual({ cols: 4, rows: 1 });
+  });
+
+  it("adds rows, keeping the requested column count", () => {
+    expect(growGridToFit({ cols: 4, rows: 1 }, 5)).toEqual({ cols: 4, rows: 2 });
+    expect(growGridToFit({ cols: 2, rows: 1 }, 7)).toEqual({ cols: 2, rows: 4 });
+    expect(growGridToFit({ cols: 1, rows: 1 }, 3)).toEqual({ cols: 1, rows: 3 });
+  });
+});
 
 describe("parseGrid", () => {
   it("parses NxM", () => {

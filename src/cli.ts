@@ -49,7 +49,7 @@ import {
   setGroupBackground,
   setGroupTheme,
 } from "./groups.js";
-import { parseCustomColumns, parseGrid, tile } from "./layouts.js";
+import { growGridToFit, parseCustomColumns, parseGrid, tile } from "./layouts.js";
 import {
   activeSessionUuids,
   isClaudeCommand,
@@ -1352,17 +1352,29 @@ export async function run(argv: string[]): Promise<void> {
         );
       if (m) {
         const repo = [...byRepo.keys()].find((r) => r.startsWith(m[1]!.toLowerCase()));
-        if (repo) {
-          const gridStr = m[2]!.replace(/\s/g, "").toLowerCase();
+        const gridStr = m[2]!.replace(/\s/g, "").toLowerCase();
+        const wanted = gridStr === "auto" ? undefined : tryParseGrid(gridStr);
+        if (repo && (gridStr === "auto" || wanted)) {
           const screenPart = m[3] !== undefined ? ` --screen ${m[3]}` : "";
+          const onDisplay = m[3] !== undefined ? ` on display ${m[3]}` : "";
+          // `place` refuses a grid with fewer cells than the repo has panes,
+          // and in Alfred a refusal is an invisible non-zero exit — the item
+          // just appears to do nothing. Grow the rows to fit instead, and put
+          // the shape that will actually be applied in the title, so it is
+          // visible before the return key rather than after.
+          const panes = byRepo.get(repo) ?? 0;
+          const grown = wanted ? growGridToFit(wanted, panes) : undefined;
+          const applied = grown ? `${grown.cols}x${grown.rows}` : "auto";
           filtered.unshift({
             uid: "place",
-            title: `Place ${repo} ${gridStr}${m[3] !== undefined ? ` on display ${m[3]}` : ""}`,
+            title: `Place ${repo} ${applied}${onDisplay}`,
             subtitle:
-              gridStr === "auto"
-                ? "clear the grid pin, back to auto-grid"
-                : "pin grid + display as policy, tile now",
-            arg: `place ${repo} ${gridStr}${screenPart}`,
+              grown && wanted && grown.rows !== wanted.rows
+                ? `${gridStr} holds ${wanted.cols * wanted.rows} of ${panes} panes — grown to ${applied}`
+                : applied === "auto"
+                  ? "clear the grid pin, back to auto-grid"
+                  : "pin grid + display as policy, tile now",
+            arg: `place ${repo} ${applied}${screenPart}`,
           });
         }
       }
@@ -2139,6 +2151,14 @@ async function settleDisplays(initial: string): Promise<string> {
       return sig;
     }
     if (Date.now() - started >= DISPLAY_SETTLE_TIMEOUT_MS) return sig;
+  }
+}
+
+function tryParseGrid(input: string): GridSpec | undefined {
+  try {
+    return parseGrid(input);
+  } catch {
+    return undefined;
   }
 }
 

@@ -1246,13 +1246,24 @@ export async function run(argv: string[]): Promise<void> {
         arg: "cheatsheet --alfred",
         match: "cheatsheet help docs readme manual guide howto",
       });
-      const filtered = q
-        ? items.filter((i) => `${i.title} ${i.match ?? ""}`.toLowerCase().includes(q))
+      // A leading verb scopes the rest of the query instead of being matched
+      // literally. Without this, "organize myapp" matched no item's title (the
+      // filter is a substring test over the whole query) and the repo lookup
+      // below read "organize" as the repo token, so Alfred was handed an empty
+      // item list and showed nothing at all.
+      const tokens = q.split(/\s+/).filter(Boolean);
+      const leadingVerb =
+        tokens.length > 1 && /^(?:org(?:anize)?|place|arr(?:ange)?)$/.test(tokens[0]!)
+          ? tokens[0]!
+          : undefined;
+      const scoped = leadingVerb ? tokens.slice(1).join(" ") : q;
+      const filtered = scoped
+        ? items.filter((i) => `${i.title} ${i.match ?? ""}`.toLowerCase().includes(scoped))
         : items;
 
       // Repo-token queries surface that repo's dormant conversations (titled,
       // from transcript heads) and a repo-scoped snapshot restore.
-      const firstTok = q.split(/\s+/)[0] ?? "";
+      const firstTok = tokens[leadingVerb ? 1 : 0] ?? "";
       if (firstTok) {
         const knownRepos = new Set<string>(byRepo.keys());
         for (const s of Object.values(state.sessions ?? {})) {
@@ -1285,6 +1296,21 @@ export async function run(argv: string[]): Promise<void> {
               });
             }
           }
+        }
+      }
+
+      // "organize <repo>" / "place <repo>" with no grid: tile that one repo.
+      // `place <repo> auto` is the only repo-scoped tiling verb there is, so
+      // say plainly that it clears the pin rather than implying a pure reflow.
+      if (leadingVerb && /^(?:org(?:anize)?|place)$/.test(leadingVerb) && tokens.length === 2) {
+        const repo = [...byRepo.keys()].find((r) => r.startsWith(firstTok));
+        if (repo) {
+          filtered.unshift({
+            uid: "place-auto",
+            title: `Organize ${repo}`,
+            subtitle: `tile this repo's ${byRepo.get(repo)} pane(s) into an auto grid — clears its grid pin`,
+            arg: `place ${repo} auto`,
+          });
         }
       }
 

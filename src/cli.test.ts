@@ -334,6 +334,30 @@ describe("seance CLI (black-box, SEANCE_HOME isolated)", () => {
     });
   });
 
+  it("json query scopes a leading verb instead of matching it literally", async () => {
+    await withSeanceDir(async (dir) => {
+      await writeState(dir, SEEDED);
+      // "organize dark" previously matched no item title and read "organize"
+      // as the repo token, so Alfred was handed an empty list.
+      const r = await runSeance(["json", "query", "organize dark"], dir);
+      expect(r.exitCode).toBe(0);
+      const items = (JSON.parse(r.stdout) as { items: Array<{ title: string }> }).items;
+      expect(items.length).toBeGreaterThan(0);
+      expect(items.map((i) => i.title)).toContain("Appearance dark");
+    });
+  });
+
+  it("json query keeps a saved arrangement reachable through its verb", async () => {
+    await withSeanceDir(async (dir) => {
+      await writeState(dir, SEEDED);
+      const r = await runSeance(["json", "query", "arrange focus"], dir);
+      const args = (JSON.parse(r.stdout) as { items: Array<{ arg: string }> }).items.map(
+        (i) => i.arg,
+      );
+      expect(args).toContain("arrange focus");
+    });
+  });
+
   it("json query turns \"arrange save X\" into the --save invocation", async () => {
     await withSeanceDir(async (dir) => {
       const r = await runSeance(["json", "query", "arrange save weekend"], dir);

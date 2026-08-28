@@ -6,13 +6,14 @@ Panes organize themselves by repo. One verb does everything.
 
 - \`seance arrange\` — you figure it out: group every on-screen pane by repo, spread the repos across every display, shape each block to suit that display, paint. Skips minimized panes. Takes no grid.
 - \`seance arrange <name>\` — apply a saved arrangement. \`seance arrange --save <name>\` records where the windows are now, moving nothing.
-- \`seance organize\` — I want *this shape*: perceive every pane, color by repo, place by policy, tile, paint. Idempotent, safe any time.
+- \`seance organize\` — I want *this shape*: perceive every pane, color by repo, place by policy, tile, paint. Idempotent, safe any time. Skips minimized panes too.
 - \`seance organize <NxM> [--screen n] [--pin]\` — tile every pane into that shape for this run. \`--screen\` scopes it to one display; \`--pin\` remembers it.
 - \`seance organize auto\` — clear every pinned grid and re-organize.
 - \`seance place <repo> <NxM> [--screen n]\` — same, for one repo, and always pinned.
 - \`seance place <repo> auto\` — clear that repo's pin.
 - \`seance focus <repo>\` — raise and focus that repo's first pane.
 - \`seance appearance dark|light|auto\` — pin theme resolution (or follow macOS), repaint everything.
+- \`seance reflow on|off\` — whether the watcher re-tiles when you plug a display in. \`off\` leaves your windows exactly where they are; painting carries on.
 - \`seance screens\` — list displays: index, stable id, size, position, role.
 
 ## Sessions
@@ -38,7 +39,7 @@ Results come from live perception on each keystroke; the brief "Summoning…" is
 
 ## The watcher
 
-\`seance watch --install\` writes a launchd agent and starts it. Every 2s it paints new panes with their repo's colors; every 10s it checks whether the display set changed and re-organizes if so. It never re-tiles otherwise, so it won't yank windows around while you work.
+\`seance watch --install\` writes a launchd agent and starts it. Every 2s it paints new panes with their repo's colors and checks whether the display set changed. On a change it waits for the geometry to *settle* — macOS emits several transitions while it negotiates a new display — then re-organizes once, against the shape that actually stuck. It never re-tiles otherwise, so it won't yank windows around while you work, and it never moves a minimized pane. \`seance reflow off\` stops it touching geometry on display changes at all.
 
 Logs: \`~/.config/seance/watcher.log\`. Remove with \`seance watch --uninstall\`. It runs the built CLI, so \`npm run build\` after changing source (then uninstall/install to restart it).
 
@@ -56,6 +57,7 @@ Logs: \`~/.config/seance/watcher.log\`. Remove with \`seance watch --uninstall\`
 
 ## When it misbehaves
 
+- **Plugging in a display rearranged everything** — that's the watcher reflowing. It waits for the display set to settle and does it once, but if you'd rather it never touched your layout: \`seance reflow off\`.
 - **Windows don't move** — grant Accessibility to the terminal you run seance from: System Settings → Privacy & Security → Accessibility.
 - **The Alfred keyword does nothing** — re-run \`seance alfred install\`. It bakes your node's PATH into the workflow, which Alfred otherwise runs under a sterile environment.
 - **Every repo shows up as \`home\`** — \`lsof\` couldn't read a cwd (sandboxed child process). Those panes still get placed, just under the fallback name.

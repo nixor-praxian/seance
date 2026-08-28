@@ -33,15 +33,15 @@ The only persistent state:
 {
   "identity": {
     // sticky repo → theme pair; auto-assigned on first sighting, manual pins win
-    "zeus":    "Gruvbox Material",
-    "meshuga": { "pair": "Rose Pine", "bg": { "dark": "#2e4636", "light": "#eef4e8" } }
+    "zephyr":    "Gruvbox Material",
+    "mercury": { "pair": "Rose Pine", "bg": { "dark": "#2e4636", "light": "#eef4e8" } }
   },
   "placement": [
     // ordered rules on display ROLES, computed from live geometry each time:
     // main = isMain; externals sorted by x → external.left / external.right.
     // Never an NSScreen index, never a CGDirectDisplayID.
-    ["meshuga", "external.left"],
-    ["zeus",    "external.right"],
+    ["mercury", "external.left"],
+    ["zephyr",    "external.right"],
     ["*",       "main"]
   ],
   "layout": { "minPaneWidth": 384 },
@@ -73,7 +73,7 @@ Surfaces, in order of build:
 
 1. **Alfred 5 workflow** (installed; the palette). Script Filter over a new
    `seance json query "<q>"` mode → fuzzy actions: empty query = Organize /
-   Gather / Save session; `zeu` = Summon zeus / Theme / Focus next pane.
+   Gather / Save session; `zeu` = Summon zephyr / Theme / Focus next pane.
    Ships in-repo (`alfred/`), installed via `seance alfred install`.
 2. **Shortcut manager:** Alfred hotkeys mapped to seance verbs
    (⌥1…⌥9 = summon nth repo, ⌥O = organize). Declared in seance config,

@@ -9,7 +9,7 @@ import {
 } from "./policy.js";
 import type { LivePane, PolicyScreen, Role, IdentityEntry } from "./policy.js";
 
-const home = "/Users/node";
+const home = "/Users/dev";
 
 function screen(key: string, x: number, isMain = false): PolicyScreen {
   return { key, rect: { x, y: 0, width: 1920, height: 1080 }, isMain };
@@ -21,14 +21,14 @@ function pane(ttyPath: string, cwd: string): LivePane {
 
 describe("repoOf", () => {
   it("returns the basename, stripping trailing slashes", () => {
-    expect(repoOf("/Users/node/GitHub/seance", home)).toBe("seance");
-    expect(repoOf("/Users/node/GitHub/seance/", home)).toBe("seance");
-    expect(repoOf("/Users/node/GitHub/seance///", home)).toBe("seance");
+    expect(repoOf("/Users/dev/GitHub/seance", home)).toBe("seance");
+    expect(repoOf("/Users/dev/GitHub/seance/", home)).toBe("seance");
+    expect(repoOf("/Users/dev/GitHub/seance///", home)).toBe("seance");
   });
 
   it("maps home to \"home\" and empty or \"/\" to \"root\"", () => {
-    expect(repoOf("/Users/node", home)).toBe("home");
-    expect(repoOf("/Users/node/", home)).toBe("home");
+    expect(repoOf("/Users/dev", home)).toBe("home");
+    expect(repoOf("/Users/dev/", home)).toBe("home");
     expect(repoOf("", home)).toBe("root");
     expect(repoOf("/", home)).toBe("root");
   });
@@ -112,12 +112,12 @@ describe("placePanes", () => {
   it("routes repos to screens by exact rule", () => {
     const out = placePanes(
       [
-        pane("/dev/ttys001", "/Users/node/GitHub/meshuga"),
-        pane("/dev/ttys002", "/Users/node/GitHub/zeus"),
+        pane("/dev/ttys001", "/Users/dev/GitHub/mercury"),
+        pane("/dev/ttys002", "/Users/dev/GitHub/zephyr"),
       ],
       [
-        { repo: "meshuga", role: "external.left" },
-        { repo: "zeus", role: "external.right" },
+        { repo: "mercury", role: "external.left" },
+        { repo: "zephyr", role: "external.right" },
       ],
       roles,
       home,
@@ -128,9 +128,9 @@ describe("placePanes", () => {
 
   it("routes unmatched repos through the wildcard rule", () => {
     const out = placePanes(
-      [pane("/dev/ttys001", "/Users/node/GitHub/anything")],
+      [pane("/dev/ttys001", "/Users/dev/GitHub/anything")],
       [
-        { repo: "meshuga", role: "external.left" },
+        { repo: "mercury", role: "external.left" },
         { repo: "*", role: "external.right" },
       ],
       roles,
@@ -141,8 +141,8 @@ describe("placePanes", () => {
 
   it("defaults to main when no rule matches", () => {
     const out = placePanes(
-      [pane("/dev/ttys001", "/Users/node/GitHub/other")],
-      [{ repo: "meshuga", role: "external.left" }],
+      [pane("/dev/ttys001", "/Users/dev/GitHub/other")],
+      [{ repo: "mercury", role: "external.left" }],
       roles,
       home,
     );
@@ -152,8 +152,8 @@ describe("placePanes", () => {
   it("degrades an unresolvable role via resolveRole", () => {
     const mainOnly = computeRoles([laptop]);
     const out = placePanes(
-      [pane("/dev/ttys001", "/Users/node/GitHub/meshuga")],
-      [{ repo: "meshuga", role: "external.right" }],
+      [pane("/dev/ttys001", "/Users/dev/GitHub/mercury")],
+      [{ repo: "mercury", role: "external.right" }],
       mainOnly,
       home,
     );
@@ -163,11 +163,11 @@ describe("placePanes", () => {
   it("orders panes by rule index, then repo, then tty, keeping same-repo panes adjacent", () => {
     const out = placePanes(
       [
-        pane("/dev/ttys009", "/Users/node/GitHub/beta"),
-        pane("/dev/ttys002", "/Users/node/GitHub/zeta"),
-        pane("/dev/ttys008", "/Users/node/GitHub/alpha"),
-        pane("/dev/ttys001", "/Users/node/GitHub/zeta"),
-        pane("/dev/ttys003", "/Users/node/GitHub/alpha"),
+        pane("/dev/ttys009", "/Users/dev/GitHub/beta"),
+        pane("/dev/ttys002", "/Users/dev/GitHub/zeta"),
+        pane("/dev/ttys008", "/Users/dev/GitHub/alpha"),
+        pane("/dev/ttys001", "/Users/dev/GitHub/zeta"),
+        pane("/dev/ttys003", "/Users/dev/GitHub/alpha"),
       ],
       [
         { repo: "zeta", role: "main" },

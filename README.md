@@ -11,8 +11,8 @@ Run one command — `seance organize` — and every Ghostty window is identified
 - **Repos stay together** — each repo's panes get one contiguous block, and the block is shaped to the display: a landscape screen splits into columns, a rotated one into stacked rows. Panes you've minimized are left minimized instead of eating a slot.
 - **Colors per project** — each repo is assigned a theme pair from a curated ring, collision-free among live repos, sticky across days. Applied per *window* via OSC sequences, so five repos can sit side by side in five palettes.
 - **Policy, not coordinates** — displays are addressed by *role* (`main`, `external.left`, `external.right`), computed from live geometry at each run. Layouts derive from one number (`minPaneWidth`). One screen or three, docked or nomad: same rules, correct result.
-- **Imperative override that sticks** — `seance place zeus 3x3 --screen 1` tiles now *and* records the choice as policy, so every future organize honours it. `place zeus auto` clears it.
-- **Alfred palette** — type `s` in Alfred: Organize, Focus any repo, or the grid grammar (`s zeus 3x3 1`). Results are generated from live perception on each keystroke.
+- **Imperative override that sticks** — `seance place zephyr 3x3 --screen 1` tiles now *and* records the choice as policy, so every future organize honours it. `place zephyr auto` clears it.
+- **Alfred palette** — type `s` in Alfred: Organize, Focus any repo, or the grid grammar (`s zephyr 3x3 1`). Results are generated from live perception on each keystroke.
 - **Watcher daemon** — a launchd agent that paints new panes with their repo's colors within ~2s and re-organizes when the display set changes. Never re-tiles spontaneously otherwise.
 - **Space-aware** — windows stranded on another macOS Space (the classic external-display-disconnect failure) are reported with their foreground command instead of silently skipped — and still get painted, since OSC crosses Spaces even when Accessibility can't.
 - **Light/dark aware** — themes are `{ dark, light }` pairs; resolution follows macOS appearance, or pin it with `seance appearance dark`.

@@ -14,7 +14,7 @@ import {
 
 describe("projectDirNameForCwd", () => {
   it("replaces every slash with a dash", () => {
-    expect(projectDirNameForCwd("/Users/node/GitHub/seance")).toBe("-Users-node-GitHub-seance");
+    expect(projectDirNameForCwd("/Users/dev/GitHub/seance")).toBe("-Users-dev-GitHub-seance");
   });
 
   it("replaces dots as well as slashes", () => {
@@ -91,7 +91,7 @@ describe("pickSessionUuids", () => {
 });
 
 describe("activeSessionUuids", () => {
-  const cwd = "/Users/node/GitHub/seance";
+  const cwd = "/Users/dev/GitHub/seance";
   let projectsDir: string;
 
   beforeAll(async () => {
@@ -153,8 +153,8 @@ describe("parseSessionTitle", () => {
 
   it("uses the first text block when content is an array", () => {
     const head =
-      '{"type":"user","message":{"content":[{"type":"tool_result","content":"x"},{"type":"text","text":"tile the meshuga display"}]}}';
-    expect(parseSessionTitle(head)).toBe("tile the meshuga display");
+      '{"type":"user","message":{"content":[{"type":"tool_result","content":"x"},{"type":"text","text":"tile the mercury display"}]}}';
+    expect(parseSessionTitle(head)).toBe("tile the mercury display");
   });
 
   it("collapses whitespace and truncates to 80 chars with an ellipsis", () => {
@@ -188,7 +188,7 @@ describe("parseSessionTitle", () => {
 
   it("ranks a path-like user message below a later real sentence", () => {
     const head = [
-      '{"type":"user","message":{"content":"/Users/node/Downloads/2026-06-30-report.pdf"}}',
+      '{"type":"user","message":{"content":"/Users/dev/Downloads/2026-06-30-report.pdf"}}',
       '{"type":"user","message":{"content":"summarize that report"}}',
     ].join("\n");
     expect(parseSessionTitle(head)).toBe("summarize that report");
@@ -229,7 +229,7 @@ describe("parseSessionTitleFromChunks", () => {
 });
 
 describe("listRepoSessions", () => {
-  const cwd = "/Users/node/GitHub/seance";
+  const cwd = "/Users/dev/GitHub/seance";
   let projectsDir: string;
 
   beforeAll(async () => {

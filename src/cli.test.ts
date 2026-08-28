@@ -272,7 +272,7 @@ describe("seance CLI (black-box, SEANCE_HOME isolated)", () => {
   }
 
   const SEEDED = {
-    arrangements: { focus: [{ repo: "zeus", role: "main" }] },
+    arrangements: { focus: [{ repo: "zephyr", role: "main" }] },
   };
 
   it("arrange rejects an unknown arrangement and lists what is saved", async () => {

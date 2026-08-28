@@ -9,7 +9,7 @@ describe("looksLikeShellDefaultTitle", () => {
   });
 
   it("matches bare paths", () => {
-    expect(looksLikeShellDefaultTitle("/Users/node/GitHub/seance")).toBe(true);
+    expect(looksLikeShellDefaultTitle("/Users/dev/GitHub/seance")).toBe(true);
     expect(looksLikeShellDefaultTitle("~/GitHub/seance")).toBe(true);
   });
 
@@ -18,7 +18,7 @@ describe("looksLikeShellDefaultTitle", () => {
   });
 
   it("matches cwd, ~-collapsed cwd, and basename", () => {
-    const cwd = "/Users/node/GitHub/seance";
+    const cwd = "/Users/dev/GitHub/seance";
     const home = process.env.HOME ?? "";
     expect(looksLikeShellDefaultTitle(cwd, cwd)).toBe(true);
     expect(looksLikeShellDefaultTitle("seance", cwd)).toBe(true);
@@ -29,7 +29,7 @@ describe("looksLikeShellDefaultTitle", () => {
 
   it("preserves meaningful titles", () => {
     expect(looksLikeShellDefaultTitle("Claude Code — debugging save")).toBe(false);
-    expect(looksLikeShellDefaultTitle("✳ Integrate iris with zeus")).toBe(false);
-    expect(looksLikeShellDefaultTitle("metis dev server")).toBe(false);
+    expect(looksLikeShellDefaultTitle("✳ Integrate atlas with zephyr")).toBe(false);
+    expect(looksLikeShellDefaultTitle("meridian dev server")).toBe(false);
   });
 });

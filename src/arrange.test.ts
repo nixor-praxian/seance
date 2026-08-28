@@ -359,24 +359,24 @@ describe("assignFamilies", () => {
   }
 
   const LIVE_RIG = counts(
-    ["meshuga", 3],
-    ["zeus", 2],
+    ["mercury", 3],
+    ["zephyr", 2],
     ["seance", 4],
-    ["metis", 2],
+    ["meridian", 2],
     ["karafe", 1],
     ["home", 1],
   );
   const PINS: PlacementRule[] = [
-    { repo: "meshuga", role: "external.left" },
-    { repo: "zeus", role: "external.left" },
+    { repo: "mercury", role: "external.left" },
+    { repo: "zephyr", role: "external.left" },
     { repo: "seance", role: "external.left" },
     { repo: "*", role: "main" },
   ];
 
   it("honours explicit pins and balances the rest by fill ratio", () => {
     const { byScreen } = assignFamilies(LIVE_RIG, PINS, {}, roles, BUDGET);
-    expect(byScreen.get("l")!.repos).toEqual(["meshuga", "zeus", "seance"]);
-    expect(byScreen.get("r")!.repos).toEqual(["metis"]);
+    expect(byScreen.get("l")!.repos).toEqual(["mercury", "zephyr", "seance"]);
+    expect(byScreen.get("r")!.repos).toEqual(["meridian"]);
     expect(byScreen.get("m")!.repos).toEqual(["karafe", "home"]);
   });
 
@@ -461,7 +461,7 @@ describe("assignFamilies", () => {
 
   it("reports a display left empty by pins without overriding them", () => {
     const { byScreen, notes } = assignFamilies(
-      counts(["meshuga", 3], ["zeus", 2], ["seance", 4]),
+      counts(["mercury", 3], ["zephyr", 2], ["seance", 4]),
       PINS,
       {},
       roles,
@@ -471,12 +471,12 @@ describe("assignFamilies", () => {
     expect(notes).toContainEqual({
       kind: "empty-role",
       role: "external.right",
-      pinnedElsewhere: ["meshuga", "seance", "zeus"],
+      pinnedElsewhere: ["mercury", "seance", "zephyr"],
     });
     expect(notes).toContainEqual({
       kind: "empty-role",
       role: "main",
-      pinnedElsewhere: ["meshuga", "seance", "zeus"],
+      pinnedElsewhere: ["mercury", "seance", "zephyr"],
     });
   });
 

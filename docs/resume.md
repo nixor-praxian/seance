@@ -32,7 +32,7 @@ anyone has after a restart. `resolveRepoCwd` (`src/cli.ts:1541`) falls back to
 the browse, not the lookup.
 
 It also can't reach a conversation whose cwd isn't `~/GitHub/<repo>`. Two of the
-nine live in `/Users/node/GitHub` itself, one in a `docs/` subdirectory of a
+nine live in `~/GitHub` itself, one in a `docs/` subdirectory of a
 repo. No repo token reaches any of them.
 
 ### 2. mtime is not activity
@@ -53,7 +53,7 @@ nine real threads:
 
 | outcome | count | what you actually see |
 |---|---|---|
-| no title — falls back to the uuid | 3 | `Resume Argus — ca83252d` |
+| no title — falls back to the uuid | 3 | `Resume Beacon — 0a1b2c3d` |
 | the boilerplate agent preamble | 4 | `- if you must explore, run a Sonnet agent…` |
 | a true but useless opener | 2 | `pull latest` |
 | describes where the session stopped | **0** | — |
@@ -63,8 +63,8 @@ Two separate causes, both worth fixing:
 **A pasted image destroys the title.** The first user record carries its
 attachment inline, so it runs 300–600 KB. It overruns the 32 KB head window,
 the truncated line fails `JSON.parse`, and the session goes untitled. Measured
-first-user-record lengths: Argus 580 KB at offset 17 KB, L'Impression 308 KB,
-Spark 604 KB — all truncated; Zeus's image-free 1.5 KB record parses fine. This
+first-user-record lengths: Beacon 580 KB at offset 17 KB, Lantern 308 KB,
+Forge 604 KB — all truncated; Zephyr's image-free 1.5 KB record parses fine. This
 is not an edge case for a user who pastes screenshots into most sessions.
 
 **The first message is the wrong message.** None of these transcripts contains a
@@ -108,9 +108,9 @@ enough, so this needs no new grammar. Global parked items are appended to the
 conversations`, one per conversation:
 
 ```
-title:    Resume zeus — options numbers layer
+title:    Resume zephyr — options numbers layer
 subtitle: 18h · feat/options-analytics-numbers · verification report landed, ASD-STE100 copy committed
-arg:      resume --uuid 7ccc50ba-44dc-47b1-8e7a-520b0ea55620
+arg:      resume --uuid 0a1b2c3d-1111-4a01-9c01-000000000001
 ```
 
 Typing narrows by repo or by label text, so `s resume mesh` and `s resume

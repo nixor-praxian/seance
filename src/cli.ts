@@ -1072,7 +1072,7 @@ export async function run(argv: string[]): Promise<void> {
   program
     .command("place <repo> <grid>")
     .description(
-      'Pin a repo\'s grid + display and tile it now: "seance place zeus 3x3 --screen 1". Grid "auto" clears the pin. Organize honours pins from then on.',
+      'Pin a repo\'s grid + display and tile it now: "seance place zephyr 3x3 --screen 1". Grid "auto" clears the pin. Organize honours pins from then on.',
     )
     .option("--screen <n>", "target display index (see `seance screens`)", (v) => Number(v))
     .action(async (repoArg: string, gridArg: string, opts: { screen?: number }) => {
@@ -1295,8 +1295,8 @@ export async function run(argv: string[]): Promise<void> {
         });
       }
 
-      // "[verb] <repo> <grid> [display]" grammar: "zeus 3x3 1", "zeus 3x3
-      // display 1", "zeus auto", and the same with a redundant "organize"/
+      // "[verb] <repo> <grid> [display]" grammar: "zephyr 3x3 1", "zephyr 3x3
+      // display 1", "zephyr auto", and the same with a redundant "organize"/
       // "place" in front. Matches by repo prefix so "zeu 3x3 1" works too.
       const m =
         /^(?:(?:org(?:anize)?|place)\s+)?(\S+)\s+(\d+\s*x\s*\d+|auto)(?:\s+(?:display\s*|d)?(\d+))?$/i.exec(

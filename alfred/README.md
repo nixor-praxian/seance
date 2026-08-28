@@ -1,6 +1,6 @@
 # Alfred workflow for seance
 
-An Alfred 5.5+ workflow that fronts the `seance` CLI. Type `s ` in Alfred; results come from `seance json query "<q>"` (Script Filter JSON), and actioning a result runs `seance <arg>` (e.g. `seance organize`, `seance focus zeus`).
+An Alfred 5.5+ workflow that fronts the `seance` CLI. Type `s ` in Alfred; results come from `seance json query "<q>"` (Script Filter JSON), and actioning a result runs `seance <arg>` (e.g. `seance organize`, `seance focus zephyr`).
 
 ## Install
 

@@ -253,6 +253,31 @@ describe("seance CLI (black-box, SEANCE_HOME isolated)", () => {
     });
   });
 
+  it("reflow persists on/off and reports the current setting", async () => {
+    await withSeanceDir(async (dir) => {
+      const initial = await runSeance(["reflow"], dir);
+      expect(initial.exitCode).toBe(0);
+      expect(initial.stdout).toContain("reflow on display change = on");
+
+      const off = await runSeance(["reflow", "off"], dir);
+      expect(off.stdout).toContain("reflow on display change = off");
+      expect(off.stdout).toContain("still paints panes");
+      expect((await readState(dir) as { watchReflow?: boolean }).watchReflow).toBe(false);
+
+      const on = await runSeance(["reflow", "ON"], dir);
+      expect(on.stdout).toContain("reflow on display change = on");
+      expect((await readState(dir) as { watchReflow?: boolean }).watchReflow).toBe(true);
+    });
+  });
+
+  it("reflow rejects a mode that is neither on nor off", async () => {
+    await withSeanceDir(async (dir) => {
+      const bad = await runSeance(["reflow", "sometimes"], dir);
+      expect(bad.exitCode).not.toBe(0);
+      expect(bad.stderr).toContain('reflow takes "on" or "off"');
+    });
+  });
+
   it("contrast rejects a nonsense ratio", async () => {
     await withSeanceDir(async (dir) => {
       const r = await runSeance(["contrast", "banana"], dir);

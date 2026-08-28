@@ -1010,6 +1010,28 @@ export async function run(argv: string[]): Promise<void> {
       }
     });
 
+  // ── reflow (watcher autonomy over window geometry) ───────────────
+  program
+    .command("reflow [mode]")
+    .description(
+      'Whether the watcher re-tiles when the display set changes. "seance reflow off" leaves your windows where they are when you plug a display in. No argument prints the current setting.',
+    )
+    .action(async (mode: string | undefined) => {
+      const state = await loadState();
+      if (mode !== undefined) {
+        const m = mode.toLowerCase();
+        if (m !== "on" && m !== "off") throw new Error('reflow takes "on" or "off"');
+        state.watchReflow = m === "on";
+        await saveState(state);
+      }
+      const on = state.watchReflow !== false;
+      console.log(`reflow on display change = ${on ? "on" : "off"}`);
+      if (!on) {
+        console.log("the watcher still paints panes and keeps Claude Code's theme in sync");
+      }
+      if (mode !== undefined) console.log("a running watcher picks this up on its next pass");
+    });
+
   // ── organize (seance 2.0: perception + policy, docs/vision.md) ───
   program
     .command("organize [grid]")
@@ -2053,10 +2075,52 @@ function formatNote(note: PlacementNote): string {
 
 const WATCHER_PLIST = "com.seance.watcher.plist";
 
+const DISPLAY_POLL_MS = 2000;
+const DISPLAY_SETTLE_MS = 3000;
+const DISPLAY_SETTLE_TIMEOUT_MS = 30000;
+
+async function screenSignature(): Promise<string> {
+  const screens = await ghostty.listScreens();
+  return screens
+    .map((s) => `${s.displayId}:${s.rect.x},${s.rect.y},${s.rect.width},${s.rect.height}`)
+    .sort()
+    .join("|");
+}
+
+/**
+ * Block until the display geometry stops moving, then return the signature that
+ * actually held.
+ *
+ * macOS emits several transitions while negotiating a newly connected display —
+ * arrival, arrangement, scaling — and treating each as its own event fans one
+ * physical connection out into several full reflows. Observed: three.
+ *
+ * The previous implementation slept a fixed 3s and then recorded the signature
+ * captured *before* the sleep, so it neither waited for the set to settle nor
+ * remembered what it had acted on.
+ */
+async function settleDisplays(initial: string): Promise<string> {
+  const started = Date.now();
+  let sig = initial;
+  let stableSince = Date.now();
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 750));
+    const next = await screenSignature();
+    if (next !== sig) {
+      sig = next;
+      stableSince = Date.now();
+    } else if (Date.now() - stableSince >= DISPLAY_SETTLE_MS) {
+      return sig;
+    }
+    if (Date.now() - started >= DISPLAY_SETTLE_TIMEOUT_MS) return sig;
+  }
+}
+
 async function watchLoop(intervalMs: number): Promise<void> {
   const paintedSig = new Map<string, string>();
   const paletteCache = new Map<string, ThemePalette>();
   let screensSig = "";
+  let lastDisplayCheck = 0;
   let tick = 0;
   for (;;) {
     try {
@@ -2108,19 +2172,31 @@ async function watchLoop(intervalMs: number): Promise<void> {
         await saveState(state);
       }
 
-      if (tick % 5 === 0) {
-        const screens = await ghostty.listScreens();
-        const sig = screens
-          .map((s) => `${s.displayId}:${s.rect.x},${s.rect.y},${s.rect.width},${s.rect.height}`)
-          .sort()
-          .join("|");
+      // Gated on wall clock, not `tick % n`: a tick is one iteration of a loop
+      // doing osascript and lsof, so a modulo gate is minutes, not the interval
+      // it reads as.
+      if (Date.now() - lastDisplayCheck >= DISPLAY_POLL_MS) {
+        lastDisplayCheck = Date.now();
+        const sig = await screenSignature();
         if (screensSig && sig !== screensSig) {
-          console.log("watch: display set changed — reorganizing in 3s");
-          await new Promise((r) => setTimeout(r, 3000));
-          await runOrganize();
-          paintedSig.clear();
+          if (state.watchReflow === false) {
+            console.log('watch: display set changed — reflow is off ("seance reflow on")');
+            screensSig = sig;
+          } else {
+            console.log("watch: display set changed — waiting for geometry to settle");
+            const settled = await settleDisplays(sig);
+            if (settled === screensSig) {
+              console.log("watch: displays settled back to the previous shape — nothing to do");
+            } else {
+              await runOrganize();
+              paintedSig.clear();
+            }
+            screensSig = settled;
+          }
+          lastDisplayCheck = Date.now();
+        } else {
+          screensSig = sig;
         }
-        screensSig = sig;
       }
     } catch (err) {
       console.error(`watch: ${(err as Error).message}`);

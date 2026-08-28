@@ -135,7 +135,7 @@ Three layers, evaluated fresh on every run:
 | `seance arrange` | Group every **active** (non-minimized) pane by repo, spread the repos across every connected display, tile each repo into a contiguous block shaped to suit that display, paint. Takes no grid — it picks one. Idempotent. |
 | `seance arrange <name>` | Apply a saved arrangement's placement rules for this run. Does not overwrite `placement`. |
 | `seance arrange --save <name>` | Record where the windows are right now as a named arrangement (repo → display role). **Moves nothing.** Drag things where you want them, then freeze it. |
-| `seance organize` | Perceive every live pane, derive repo identity, assign colors, place by policy, tile, paint. Idempotent. Unlike `arrange`, it obeys the `*` catch-all rule and pinned grids literally, and tiles minimized panes too. |
+| `seance organize` | Perceive every live pane, derive repo identity, assign colors, place by policy, tile, paint. Idempotent. Unlike `arrange`, it obeys the `*` catch-all rule and pinned grids literally. Like `arrange`, it never moves a minimized pane. |
 | `seance organize <NxM> [--screen n] [--pin]` | Same, but force that grid instead of auto-grid — every display, or one with `--screen`. Transient by default; `--pin` writes the grid onto the affected repos' placement rules so it survives. Errors if a display's panes don't fit the shape. |
 | `seance organize auto` | Clear every pinned grid, then organize. |
 | `seance place <repo> <NxM> [--screen n]` | Tile the repo's panes now **and** pin `{display role, grid}` as its placement rule. `place <repo> auto` clears the grid pin. |
@@ -143,6 +143,7 @@ Three layers, evaluated fresh on every run:
 | `seance screens` | List connected displays — index, stable id, size, position, role. |
 | `seance appearance <dark\|light\|auto>` | Pin theme resolution to an appearance (or follow macOS), repaint everything, and point Claude Code's own theme at the same polarity. |
 | `seance contrast [ratio\|off]` | Minimum WCAG contrast every palette slot must clear before it's painted (default `4.5`). No argument audits the registered pairs. |
+| `seance reflow [on\|off]` | Whether the watcher re-tiles when the display set changes. `off` leaves your windows where they are on hotplug; painting and the Claude Code theme sync continue. No argument prints the setting. |
 | `seance session save [name]` | Snapshot the workspace as a recipe: (repo, cwd, claude session uuid) per pane — resolved from `~/.claude/projects` transcripts, no window refs. Default name `latest`. |
 | `seance session restore [name] [--repo <r>]` | Respawn what's missing — `claude --resume <uuid>` panes and plain shells — inside the running Ghostty instance, skip what's already live, then organize. `--repo` restores one repo only. Defaults to `latest`, falling back to the watcher's rolling `auto` snapshot (refreshed every ~5min), so restore works even if you never saved. |
 | `seance session list` | Saved sessions with pane counts and age. |
@@ -192,8 +193,8 @@ Repo names prefix-match (`s mya 3x2` works). Results come from live perception o
 `seance watch --install` writes `~/Library/LaunchAgents/com.seance.watcher.plist` and starts it. The loop, every 2s:
 
 - **New pane?** Assign its repo a theme if it's a new repo, and paint it. This is the "colors just happen" experience.
-- **Display set changed?** (checked every 10s, debounced 3s) — run a full organize, so plugging in at your desk reflows the workspace.
-- **Never** re-tiles outside those events — it won't yank windows around while you work.
+- **Display set changed?** (checked every 2s) — wait for the geometry to *settle*, then run one full organize, so plugging in at your desk reflows the workspace exactly once. macOS emits several transitions while it negotiates a new display; the watcher polls until the signature holds still for 3s (30s cap) and acts on the shape that actually stuck. If it settles back to where it started, nothing happens. Turn the whole behaviour off with `seance reflow off`.
+- **Never** re-tiles outside those events — it won't yank windows around while you work, and it never moves a minimized pane.
 
 Logs: `~/.config/seance/watcher.log`. Remove with `seance watch --uninstall`. The watcher runs the *built* CLI (`dist/cli.js`), so re-run `npm run build` after changing source (then `seance watch --uninstall && seance watch --install` to restart it).
 

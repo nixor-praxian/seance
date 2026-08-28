@@ -104,4 +104,10 @@ export interface SeanceState {
    * it is painted on. Absent = DEFAULT_MIN_CONTRAST. 0 disables the guard.
    */
   minContrast?: number;
+  /**
+   * Whether the watcher re-tiles when the display set changes. Absent = on.
+   * `seance reflow off` leaves window geometry alone on hotplug; painting,
+   * theme assignment and the Claude Code theme self-heal are unaffected.
+   */
+  watchReflow?: boolean;
 }

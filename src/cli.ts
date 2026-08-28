@@ -1748,7 +1748,13 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
     forcedKey = s.key;
   }
 
-  const livePanes: LivePane[] = live.map((p) => ({
+  // Minimized panes must never reach setWindowBounds: it focuses each target to
+  // migrate it onto the current Space, and focusing a minimized window restores
+  // it from the Dock. `arrange` already excludes them; `organize` is what the
+  // watcher runs on a display change, so without the same exclusion plugging in
+  // a screen un-minimizes everything that was deliberately put away.
+  const { active, minimized } = await splitByVisibility(live);
+  const livePanes: LivePane[] = active.map((p) => ({
     ttyPath: p.ttyPath,
     cwd: p.cwd,
     command: p.command,
@@ -1803,8 +1809,14 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
   await saveState(state);
 
   for (const c of changes) console.log(`theme ${c.reason === "new" ? "assigned" : "reassigned"}: ${c.repo} → ${c.pair}`);
-  console.log(`organized ${placed.length}/${live.length} pane(s), painted ${painted} (${appearance})`);
+  console.log(`organized ${placed.length}/${active.length} pane(s), painted ${painted} (${appearance})`);
   for (const line of summary) console.log(line);
+  if (minimized.length > 0) {
+    const repoCounts = new Map<string, number>();
+    for (const p of minimized) repoCounts.set(p.repo, (repoCounts.get(p.repo) ?? 0) + 1);
+    const desc = [...repoCounts.entries()].map(([r, n]) => (n > 1 ? `${r}×${n}` : r)).join(", ");
+    console.log(`minimized (not tiled): ${desc}`);
+  }
   if (pinTargets.size > 0) {
     console.log(`grid pinned ${override!.grid.cols}x${override!.grid.rows}: ${[...pinTargets.keys()].join(", ")}`);
   }

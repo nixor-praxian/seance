@@ -1,6 +1,6 @@
 {
   "name": "seance",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Summonable workspace for Ghostty on macOS: auto-organize panes by repo, per-project colors, Alfred palette, self-healing watcher.",
   "repository": {
     "type": "git",

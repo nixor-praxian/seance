@@ -181,12 +181,13 @@ Install once (`seance alfred install`), then type **`s `** in Alfred:
 | `s myapp` | Focus myapp | raise + focus that repo |
 | `s myapp 3x2 1` | Place myapp 3x2 on display 1 | tile + pin, like `seance place` |
 | `s myapp auto` | Place myapp auto | clear the grid pin |
+| `s organize myapp` | Organize myapp | tile that one repo into an auto grid (clears its pin) |
 | `s dark` | Appearance dark | pin + repaint |
 | `s save` | Save session | snapshot the workspace as `latest` |
 | `s restore` | Restore latest — k panes | respawn missing panes, organize |
 | `s myapp` | …plus Restore myapp / Resume myapp — *conversation title* | repo-scoped restore; resurrect one dormant conversation by name |
 
-Repo names prefix-match (`s mya 3x2` works). Results come from live perception on each keystroke — expect a brief "Summoning…" while `ps`/`lsof` run. If the keyword does nothing after an install, see [Troubleshooting](#troubleshooting).
+Repo names prefix-match (`s mya 3x2` works), and a leading `organize` / `place` / `arrange` scopes the rest of the query rather than being matched literally (`s org mya`). Results come from live perception on each keystroke — expect a brief "Summoning…" while `ps`/`lsof` run. If the keyword does nothing after an install, see [Troubleshooting](#troubleshooting).
 
 ## The watcher
 

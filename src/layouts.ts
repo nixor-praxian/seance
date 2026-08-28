@@ -29,6 +29,19 @@ export function parseGrid(input: string): GridSpec {
 }
 
 /**
+ * Grow a requested grid until it can hold `count` panes, keeping the requested
+ * column count and adding rows.
+ *
+ * `place` refuses a grid with fewer cells than the repo has panes, so offering
+ * the raw request in the Alfred palette produces an item whose only effect is a
+ * non-zero exit — which Alfred renders as nothing at all.
+ */
+export function growGridToFit(grid: GridSpec, count: number): GridSpec {
+  if (grid.cols * grid.rows >= count) return grid;
+  return { cols: grid.cols, rows: Math.ceil(count / grid.cols) };
+}
+
+/**
  * Parse a custom column string like "1,3" → weights [1, 3].
  * Each entry is a relative weight; "1,3" means first column is 25% wide, second is 75%.
  */

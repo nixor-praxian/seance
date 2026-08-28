@@ -4,22 +4,23 @@
 <dict>
 	<key>bundleid</key>
 	<string>com.seance.palette</string>
-	<key>name</key>
-	<string>seance</string>
-	<key>createdby</key>
-	<string>nixor-praxian</string>
-	<key>description</key>
-	<string>Summon your Ghostty workspace</string>
-	<key>disabled</key>
-	<false/>
-	<key>readme</key>
-	<string>Type `s` followed by a query. Results come from `seance json query`; actioning a result runs `seance &lt;arg&gt;`.</string>
-	<key>webaddress</key>
-	<string></string>
 	<key>category</key>
 	<string>Productivity</string>
 	<key>connections</key>
 	<dict>
+		<key>seance.action.cheatsheet</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>seance.view.cheatsheet</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
 		<key>seance.input.scriptfilter</key>
 		<array>
 			<dict>
@@ -46,20 +47,15 @@
 				<false/>
 			</dict>
 		</array>
-		<key>seance.action.cheatsheet</key>
-		<array>
-			<dict>
-				<key>destinationuid</key>
-				<string>seance.view.cheatsheet</string>
-				<key>modifiers</key>
-				<integer>0</integer>
-				<key>modifiersubtext</key>
-				<string></string>
-				<key>vitoclose</key>
-				<false/>
-			</dict>
-		</array>
 	</dict>
+	<key>createdby</key>
+	<string>nixor-praxian</string>
+	<key>description</key>
+	<string>Summon your Ghostty workspace</string>
+	<key>disabled</key>
+	<false/>
+	<key>name</key>
+	<string>seance</string>
 	<key>objects</key>
 	<array>
 		<dict>
@@ -121,7 +117,14 @@ seance json query "$1"</string>
 				<integer>102</integer>
 				<key>script</key>
 				<string>export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-seance ${(z)1}</string>
+out=$(seance ${(z)1} 2&gt;&amp;1)
+if [ $? -ne 0 ]; then
+  osascript - "$out" &lt;&lt;'AS'
+on run argv
+  display notification (item 1 of argv) with title "seance"
+end run
+AS
+fi</string>
 				<key>scriptargtype</key>
 				<integer>1</integer>
 				<key>scriptfile</key>
@@ -209,45 +212,49 @@ seance cheatsheet</string>
 			<integer>1</integer>
 		</dict>
 	</array>
+	<key>readme</key>
+	<string>Type `s` followed by a query. Results come from `seance json query`; actioning a result runs `seance &lt;arg&gt;`.</string>
 	<key>uidata</key>
 	<dict>
-		<key>seance.input.scriptfilter</key>
+		<key>seance.action.cheatsheet</key>
 		<dict>
 			<key>xpos</key>
-			<real>80</real>
+			<real>580.0</real>
 			<key>ypos</key>
-			<real>150</real>
-		</dict>
-		<key>seance.trigger.cheatsheet</key>
-		<dict>
-			<key>xpos</key>
-			<real>80</real>
-			<key>ypos</key>
-			<real>60</real>
+			<real>60.0</real>
 		</dict>
 		<key>seance.action.runscript</key>
 		<dict>
 			<key>xpos</key>
-			<real>380</real>
+			<real>380.0</real>
 			<key>ypos</key>
-			<real>240</real>
+			<real>240.0</real>
 		</dict>
-		<key>seance.action.cheatsheet</key>
+		<key>seance.input.scriptfilter</key>
 		<dict>
 			<key>xpos</key>
-			<real>580</real>
+			<real>80.0</real>
 			<key>ypos</key>
-			<real>60</real>
+			<real>150.0</real>
+		</dict>
+		<key>seance.trigger.cheatsheet</key>
+		<dict>
+			<key>xpos</key>
+			<real>80.0</real>
+			<key>ypos</key>
+			<real>60.0</real>
 		</dict>
 		<key>seance.view.cheatsheet</key>
 		<dict>
 			<key>xpos</key>
-			<real>820</real>
+			<real>820.0</real>
 			<key>ypos</key>
-			<real>60</real>
+			<real>60.0</real>
 		</dict>
 	</dict>
 	<key>version</key>
 	<string>1.0.0</string>
+	<key>webaddress</key>
+	<string></string>
 </dict>
 </plist>

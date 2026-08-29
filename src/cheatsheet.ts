@@ -13,7 +13,7 @@ Panes organize themselves by repo. One verb does everything.
 - \`seance place <repo> auto\` — clear that repo's pin.
 - \`seance focus <repo>\` — raise and focus that repo's first pane.
 - \`seance appearance dark|light|auto\` — pin theme resolution (or follow macOS), repaint everything.
-- \`seance reflow on|off\` — whether the watcher re-tiles when you plug a display in. \`off\` leaves your windows exactly where they are; painting carries on.
+- \`seance reflow always|new|off\` — how the watcher reacts when you plug a display in. \`new\` (default) only re-tiles arrangements it hasn't seen; \`always\` re-tiles every time; \`off\` never touches geometry.
 - \`seance screens\` — list displays: index, stable id, size, position, role.
 
 ## Sessions
@@ -40,7 +40,7 @@ Results come from live perception on each keystroke; the brief "Summoning…" is
 
 ## The watcher
 
-\`seance watch --install\` writes a launchd agent and starts it. Every 2s it paints new panes with their repo's colors and checks whether the display set changed. On a change it waits for the geometry to *settle* — macOS emits several transitions while it negotiates a new display — then re-organizes once, against the shape that actually stuck. It never re-tiles otherwise, so it won't yank windows around while you work, and it never moves a minimized pane. \`seance reflow off\` stops it touching geometry on display changes at all.
+\`seance watch --install\` writes a launchd agent and starts it. Every 2s it paints new panes with their repo's colors and checks whether the display set changed. On a change it waits for the geometry to *settle* — macOS emits several transitions while it negotiates a new display — then acts on the shape that actually stuck. An arrangement it has already laid out is **left alone**: macOS restores window positions itself for a configuration it knows, and that restore is your real layout. A new arrangement gets one organize and is then remembered. It never re-tiles otherwise, and never moves a minimized pane. \`seance reflow always|off\` changes this.
 
 Logs: \`~/.config/seance/watcher.log\`. Remove with \`seance watch --uninstall\`. It runs the built CLI, so \`npm run build\` after changing source (then uninstall/install to restart it).
 
@@ -58,7 +58,7 @@ Logs: \`~/.config/seance/watcher.log\`. Remove with \`seance watch --uninstall\`
 
 ## When it misbehaves
 
-- **Plugging in a display rearranged everything** — that's the watcher reflowing. It waits for the display set to settle and does it once, but if you'd rather it never touched your layout: \`seance reflow off\`.
+- **Plugging in a display rearranged everything** — the watcher only re-tiles arrangements it hasn't laid out before, so this should happen once per new setup and never again. If it keeps happening: \`seance reflow off\`. If you *want* a re-tile every time: \`seance reflow always\`.
 - **Windows don't move** — grant Accessibility to the terminal you run seance from: System Settings → Privacy & Security → Accessibility.
 - **The Alfred keyword does nothing** — re-run \`seance alfred install\`. It bakes your node's PATH into the workflow, which Alfred otherwise runs under a sterile environment.
 - **Every repo shows up as \`home\`** — \`lsof\` couldn't read a cwd (sandboxed child process). Those panes still get placed, just under the fallback name.

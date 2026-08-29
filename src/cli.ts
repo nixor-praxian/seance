@@ -1014,19 +1014,28 @@ export async function run(argv: string[]): Promise<void> {
   program
     .command("reflow [mode]")
     .description(
-      'Whether the watcher re-tiles when the display set changes. "seance reflow off" leaves your windows where they are when you plug a display in. No argument prints the current setting.',
+      'How the watcher reacts to a display change. "new" (default) re-tiles only for an arrangement it has not laid out before, leaving macOS to restore the ones it knows. "always" re-tiles on every change. "off" never touches geometry. No argument prints the setting.',
     )
     .action(async (mode: string | undefined) => {
       const state = await loadState();
       if (mode !== undefined) {
-        const m = mode.toLowerCase();
-        if (m !== "on" && m !== "off") throw new Error('reflow takes "on" or "off"');
-        state.watchReflow = m === "on";
+        const raw = mode.toLowerCase();
+        const m = raw === "on" ? "new" : raw;
+        if (m !== "always" && m !== "new" && m !== "off") {
+          throw new Error('reflow takes "always", "new" or "off"');
+        }
+        state.reflowMode = m;
         await saveState(state);
       }
-      const on = state.watchReflow !== false;
-      console.log(`reflow on display change = ${on ? "on" : "off"}`);
-      if (!on) {
+      const m = state.reflowMode ?? "new";
+      console.log(`reflow on display change = ${m}`);
+      if (m === "new") {
+        const n = (state.knownDisplaySets ?? []).length;
+        console.log(
+          `${n} display arrangement(s) already laid out — those are left to macOS's own restore`,
+        );
+      }
+      if (m === "off") {
         console.log("the watcher still paints panes and keeps Claude Code's theme in sync");
       }
       if (mode !== undefined) console.log("a running watcher picks this up on its next pass");
@@ -2162,6 +2171,19 @@ function tryParseGrid(input: string): GridSpec | undefined {
   }
 }
 
+/**
+ * Record a display arrangement the watcher has laid out. Loaded fresh rather
+ * than mutating watchLoop's copy, because runOrganize saves its own state and
+ * writing the stale copy back would undo it.
+ */
+async function rememberDisplaySet(sig: string): Promise<void> {
+  const fresh = await loadState();
+  const known = fresh.knownDisplaySets ?? [];
+  if (known.includes(sig)) return;
+  fresh.knownDisplaySets = [...known, sig].slice(-16);
+  await saveState(fresh);
+}
+
 async function watchLoop(intervalMs: number): Promise<void> {
   const paintedSig = new Map<string, string>();
   const paletteCache = new Map<string, ThemePalette>();
@@ -2224,23 +2246,37 @@ async function watchLoop(intervalMs: number): Promise<void> {
       if (Date.now() - lastDisplayCheck >= DISPLAY_POLL_MS) {
         lastDisplayCheck = Date.now();
         const sig = await screenSignature();
+        const mode = state.reflowMode ?? "new";
         if (screensSig && sig !== screensSig) {
-          if (state.watchReflow === false) {
-            console.log('watch: display set changed — reflow is off ("seance reflow on")');
+          if (mode === "off") {
+            console.log('watch: display set changed — reflow is off ("seance reflow new")');
             screensSig = sig;
           } else {
             console.log("watch: display set changed — waiting for geometry to settle");
             const settled = await settleDisplays(sig);
+            const known = (state.knownDisplaySets ?? []).includes(settled);
             if (settled === screensSig) {
               console.log("watch: displays settled back to the previous shape — nothing to do");
+            } else if (mode === "new" && known) {
+              // macOS restores window positions per display arrangement when a
+              // configuration it has seen comes back, and that restoration is
+              // the layout the user actually had. Re-deriving one on top of it
+              // is how reconnecting a known dock threw the real layout away.
+              console.log(
+                "watch: known display arrangement — leaving macOS's restore alone (seance reflow always)",
+              );
             } else {
               await runOrganize();
               paintedSig.clear();
+              await rememberDisplaySet(settled);
             }
             screensSig = settled;
           }
           lastDisplayCheck = Date.now();
         } else {
+          // Seed on the first pass, so the arrangement the watcher booted into
+          // is never treated as new.
+          if (!screensSig && mode !== "off") await rememberDisplaySet(sig);
           screensSig = sig;
         }
       }

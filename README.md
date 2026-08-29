@@ -143,7 +143,7 @@ Three layers, evaluated fresh on every run:
 | `seance screens` | List connected displays — index, stable id, size, position, role. |
 | `seance appearance <dark\|light\|auto>` | Pin theme resolution to an appearance (or follow macOS), repaint everything, and point Claude Code's own theme at the same polarity. |
 | `seance contrast [ratio\|off]` | Minimum WCAG contrast every palette slot must clear before it's painted (default `4.5`). No argument audits the registered pairs. |
-| `seance reflow [on\|off]` | Whether the watcher re-tiles when the display set changes. `off` leaves your windows where they are on hotplug; painting and the Claude Code theme sync continue. No argument prints the setting. |
+| `seance reflow [always\|new\|off]` | How the watcher reacts to a display change. `new` (default) re-tiles only for an arrangement it hasn't laid out before; `always` re-tiles on every change; `off` never touches geometry. No argument prints the setting. |
 | `seance session save [name]` | Snapshot the workspace as a recipe: (repo, cwd, claude session uuid) per pane — resolved from `~/.claude/projects` transcripts, no window refs. Default name `latest`. |
 | `seance session restore [name] [--repo <r>]` | Respawn what's missing — `claude --resume <uuid>` panes and plain shells — inside the running Ghostty instance, skip what's already live, then organize. `--repo` restores one repo only. Defaults to `latest`, falling back to the watcher's rolling `auto` snapshot (refreshed every ~5min), so restore works even if you never saved. |
 | `seance session list` | Saved sessions with pane counts and age. |
@@ -194,7 +194,10 @@ Repo names prefix-match (`s mya 3x2` works), and a leading `organize` / `place` 
 `seance watch --install` writes `~/Library/LaunchAgents/com.seance.watcher.plist` and starts it. The loop, every 2s:
 
 - **New pane?** Assign its repo a theme if it's a new repo, and paint it. This is the "colors just happen" experience.
-- **Display set changed?** (checked every 2s) — wait for the geometry to *settle*, then run one full organize, so plugging in at your desk reflows the workspace exactly once. macOS emits several transitions while it negotiates a new display; the watcher polls until the signature holds still for 3s (30s cap) and acts on the shape that actually stuck. If it settles back to where it started, nothing happens. Turn the whole behaviour off with `seance reflow off`.
+- **Display set changed?** (checked every 2s) — wait for the geometry to *settle*, then decide. macOS emits several transitions while it negotiates a new display; the watcher polls until the signature holds still for 3s (30s cap) and acts on the shape that actually stuck.
+  - A display arrangement seance has **already laid out** is left alone. macOS restores window positions itself when a configuration it knows comes back, and that restoration *is* your layout — re-deriving one on top of it is how reconnecting a familiar dock used to shuffle everything.
+  - A **new** arrangement gets one full organize, then is remembered.
+  - `seance reflow always` restores the old re-tile-on-every-change behaviour; `seance reflow off` stops it touching geometry at all.
 - **Never** re-tiles outside those events — it won't yank windows around while you work, and it never moves a minimized pane.
 
 Logs: `~/.config/seance/watcher.log`. Remove with `seance watch --uninstall`. The watcher runs the *built* CLI (`dist/cli.js`), so re-run `npm run build` after changing source (then `seance watch --uninstall && seance watch --install` to restart it).

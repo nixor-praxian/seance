@@ -124,6 +124,21 @@ function pickKeeper(colliders: string[], identity: Record<string, IdentityEntry>
   return best;
 }
 
+/**
+ * Throwaway working directories that must never earn a lasting identity.
+ *
+ * Agent worktrees are created one per run under a unique name, so an entry for
+ * one is dead the moment it is written. 19 had accumulated on the first machine
+ * this was measured on, arriving roughly one a day, and every one of them held
+ * a pair hostage in a ring that real repos were competing for.
+ *
+ * Deliberately narrow: it matches the generated shape exactly, so a real repo
+ * that merely starts with the same letters is untouched.
+ */
+export function isEphemeralRepo(repo: string): boolean {
+  return /^temp_git_\d+_[a-z0-9]+$/i.test(repo);
+}
+
 export function assignThemes(
   liveRepos: string[],
   identity: Record<string, IdentityEntry>,
@@ -133,8 +148,13 @@ export function assignThemes(
   identity: Record<string, IdentityEntry>;
   changes: Array<{ repo: string; pair: string; reason: "new" | "collision" }>;
 } {
-  const live = [...new Set(liveRepos)].sort();
+  const live = [...new Set(liveRepos)].filter((r) => !isEphemeralRepo(r)).sort();
   const result: Record<string, IdentityEntry> = { ...identity };
+  // Drop any that were recorded before they were recognised as throwaway, so
+  // the pairs they were holding return to the ring.
+  for (const repo of Object.keys(result)) {
+    if (isEphemeralRepo(repo)) delete result[repo];
+  }
   const changes: Array<{ repo: string; pair: string; reason: "new" | "collision" }> = [];
 
   const wearers = new Map<string, string[]>();
@@ -153,7 +173,7 @@ export function assignThemes(
     for (const repo of colliders) if (repo !== keeper) losers.add(repo);
   }
 
-  const pairsInIdentity = new Set<string>(Object.values(identity).map((e) => e.pair));
+  const pairsInIdentity = new Set<string>(Object.values(result).map((e) => e.pair));
   const pairsWornByLive = new Set<string>();
   for (const repo of live) {
     const entry = identity[repo];

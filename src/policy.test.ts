@@ -292,6 +292,26 @@ describe("assignThemes", () => {
     expect(second.identity).toEqual(first.identity);
   });
 
+  it("gives throwaway worktrees no identity, and reclaims any they hold", () => {
+    const input: Record<string, IdentityEntry> = {
+      real: { pair: "catppuccin" },
+      temp_git_1787562654917_matjmd: { pair: "rose-pine" },
+    };
+    const { identity, changes } = assignThemes(
+      ["real", "temp_git_1787562654917_matjmd", "temp_git_9_abc"],
+      input,
+      ring,
+      NOW,
+    );
+    expect(Object.keys(identity).sort()).toEqual(["real"]);
+    expect(changes).toEqual([]);
+  });
+
+  it("leaves a real repo whose name merely resembles a worktree alone", () => {
+    const { identity } = assignThemes(["temp_gitignore", "temp_git_x"], {}, ring, NOW);
+    expect(Object.keys(identity).sort()).toEqual(["temp_git_x", "temp_gitignore"]);
+  });
+
   it("the incumbent keeps the pair when a newer repo collides", () => {
     const input: Record<string, IdentityEntry> = {
       established: { pair: "catppuccin", assignedAt: "2026-01-01T00:00:00.000Z" },

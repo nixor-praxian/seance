@@ -45,7 +45,9 @@ The Alfred workflow is a *copy* under `~/Library/Application Support/Alfred/...`
    suspecting the perception code:
    `pgrep -f "Ghostty.app/Contents/MacOS/" | wc -l`
 
-4. **Minimized panes must be excluded before `setWindowBounds`, not after.** That function focuses
+4. **Display identity is the UUID, not the `CGDirectDisplayID`.** A DisplayLink display is created by a userspace agent, so macOS reissues its id every time that agent restarts — on such a machine the id changes on every replug. `CGDisplayCreateUUIDFromDisplayID` lives in **ColorSync.framework**; looking it up in CoreGraphics fails with a bare *symbol not found*. Persist geometry from the **full frame**, never `visibleFrame`, which moves with the Dock.
+
+5. **Minimized panes must be excluded before `setWindowBounds`, not after.** That function focuses
    each target to migrate it across Spaces, and focusing a minimized window restores it from the
    Dock. Both `arrange` and `organize` call `splitByVisibility` for this reason.
 

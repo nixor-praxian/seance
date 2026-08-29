@@ -363,10 +363,30 @@ export interface ScreenInfo {
    * `displayId` instead.
    */
   index: number;
-  /** Stable CGDirectDisplayID (NSScreenNumber). Survives reorder/reconnect. */
+  /**
+   * CGDirectDisplayID (NSScreenNumber). Survives a reorder, but NOT a
+   * reconnect: a DisplayLink display is created by a userspace agent rather
+   * than enumerated from a video port, so macOS issues a fresh id every time
+   * that agent brings it up (observed 25,26 -> 27,28 within one day on the
+   * same two panels). Use `uuid` for anything that must persist.
+   */
   displayId: number;
+  /**
+   * Stable per-display UUID (CGDisplayCreateUUIDFromDisplayID, which lives in
+   * ColorSync.framework, not CoreGraphics). This is the identity macOS itself
+   * keys its remembered display arrangements on, which is why it restores
+   * window positions correctly across a reconnect. Empty string if unavailable.
+   */
+  uuid: string;
   /** Visible frame in AX coordinates (top-left origin, excl. menu bar / dock). */
   rect: Rect;
+  /**
+   * Full frame in AX coordinates — includes the menu-bar and Dock strips that
+   * `rect` excludes. Persist this, not `rect`: visibleFrame moves when the Dock
+   * changes edge or toggles auto-hide, which is indistinguishable from a
+   * display change.
+   */
+  frame: Rect;
   /** The screen with keyboard focus (NSScreen.mainScreen). */
   isMain: boolean;
   /** The screen at Cocoa origin (0,0) — carries the menu bar. */
@@ -385,6 +405,15 @@ export interface ScreenInfo {
 export async function listScreens(): Promise<ScreenInfo[]> {
   const script = `
     ObjC.import('AppKit');
+    ObjC.import('ColorSync');
+    try {
+      ObjC.bindFunction('CGDisplayCreateUUIDFromDisplayID', ['void*', ['unsigned int']]);
+      ObjC.bindFunction('CFUUIDCreateString', ['id', ['void*', 'void*']]);
+    } catch (e) {}
+    const uuidOf = (id) => {
+      try { return ObjC.unwrap($.CFUUIDCreateString($(), $.CGDisplayCreateUUIDFromDisplayID(id))) || ''; }
+      catch (e) { return ''; }
+    };
     const screens = $.NSScreen.screens;
     const main = $.NSScreen.mainScreen;
     let primaryH = 0;
@@ -401,27 +430,38 @@ export async function listScreens(): Promise<ScreenInfo[]> {
       const isMain = s.isEqual(main) ? 1 : 0;
       const isPrimary = (f.origin.x === 0 && f.origin.y === 0) ? 1 : 0;
       const did = s.deviceDescription.objectForKey("NSScreenNumber").js;
-      lines.push([v.origin.x, v.origin.y, v.size.width, v.size.height, isMain, isPrimary, did].join('\\t'));
+      lines.push([v.origin.x, v.origin.y, v.size.width, v.size.height, isMain, isPrimary, did,
+                  f.origin.x, f.origin.y, f.size.width, f.size.height, uuidOf(did)].join('\\t'));
     }
     lines.join('\\n');
   `;
   const raw = await osascript(script, { language: "JavaScript" });
   const lines = raw.split("\n").filter((l) => l.length > 0);
   const primaryH = Number(lines[0] ?? 0);
-  const parsed = lines.slice(1).map((line) => line.split("\t").map(Number));
-  const visibleFrames: CocoaRect[] = parsed.map((p) => ({
-    x: p[0] ?? 0,
-    y: p[1] ?? 0,
-    width: p[2] ?? 0,
-    height: p[3] ?? 0,
+  const rows = lines.slice(1).map((line) => line.split("\t"));
+  const num = (row: string[] | undefined, i: number): number => Number(row?.[i] ?? 0);
+  const visibleFrames: CocoaRect[] = rows.map((r) => ({
+    x: num(r, 0),
+    y: num(r, 1),
+    width: num(r, 2),
+    height: num(r, 3),
+  }));
+  const fullFrames: CocoaRect[] = rows.map((r) => ({
+    x: num(r, 7),
+    y: num(r, 8),
+    width: num(r, 9),
+    height: num(r, 10),
   }));
   const rects = cocoaFramesToAx(visibleFrames, primaryH);
+  const frames = cocoaFramesToAx(fullFrames, primaryH);
   return rects.map((rect, i) => ({
     index: i,
-    displayId: parsed[i]?.[6] ?? 0,
+    displayId: num(rows[i], 6),
+    uuid: rows[i]?.[11] ?? "",
     rect,
-    isMain: parsed[i]?.[4] === 1,
-    isPrimary: parsed[i]?.[5] === 1,
+    frame: frames[i] ?? rect,
+    isMain: rows[i]?.[4] === "1",
+    isPrimary: rows[i]?.[5] === "1",
   }));
 }
 

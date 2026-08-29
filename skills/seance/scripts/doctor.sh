@@ -40,6 +40,18 @@ fi
 
 say "state" "$STATE/state.json"
 
+if pgrep -q -f "DisplayLinkUserAgent" 2>/dev/null; then
+  say "DisplayLink agent" "running — external displays are virtual, ids are reissued on every reconnect"
+else
+  say "DisplayLink agent" "not running"
+fi
+
+if command -v seance >/dev/null 2>&1; then
+  echo
+  echo "displays (ID churns on reconnect, UUID does not):"
+  seance screens 2>/dev/null | sed 's/^/  /'
+fi
+
 log="$STATE/watcher.log"
 if [ -f "$log" ]; then
   echo

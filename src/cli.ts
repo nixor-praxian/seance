@@ -73,7 +73,7 @@ import {
   contrastRepairs,
   enforceContrast,
 } from "./contrast.js";
-import type { GridSpec, LayoutSpec, Rect, SeanceState, WindowRef } from "./types.js";
+import type { GridSpec, Group, LayoutSpec, Rect, SeanceState, WindowRef } from "./types.js";
 
 export async function run(argv: string[]): Promise<void> {
   const program = new Command();
@@ -247,10 +247,10 @@ export async function run(argv: string[]): Promise<void> {
         const screens = await ghostty.listScreens();
         const target = pickScreen(screens, {
           ...(opts.screen !== undefined ? { index: opts.screen } : {}),
-          ...(g.displayId !== undefined ? { displayId: g.displayId } : {}),
+          ...groupDisplayOpts(g),
         });
-        if (opts.screen === undefined && g.displayId !== undefined && target.displayId !== g.displayId) {
-          console.log(`(display ${g.displayId} not connected — tiling on main to avoid stranding windows)`);
+        if (opts.screen === undefined && groupWantsDisplay(g) && !isGroupDisplay(g, target)) {
+          console.log("(the group's display isn't connected — tiling on main to avoid stranding windows)");
         }
         const rects = tile(target.rect, layout, { gap: opts.gap, padding: opts.padding });
 
@@ -264,7 +264,7 @@ export async function run(argv: string[]): Promise<void> {
         const res = await ghostty.setWindowBounds(plans);
 
         setGroupLayout(state, name, layout);
-        setGroupDisplay(state, name, target.displayId);
+        setGroupDisplay(state, name, target.displayId, target.uuid);
         setActiveGroup(state, name);
         await saveState(state);
         console.log(`arranged ${res.placed.length} window(s) in "${name}" on display ${target.index}`);
@@ -295,9 +295,9 @@ export async function run(argv: string[]): Promise<void> {
         return;
       }
       const screens = await ghostty.listScreens();
-      const target = pickScreen(screens, g.displayId !== undefined ? { displayId: g.displayId } : {});
-      if (g.displayId !== undefined && target.displayId !== g.displayId) {
-        console.log(`(display ${g.displayId} not connected — using main)`);
+      const target = pickScreen(screens, groupDisplayOpts(g));
+      if (groupWantsDisplay(g) && !isGroupDisplay(g, target)) {
+        console.log("(the group's display isn't connected — using main)");
       }
       const rects = tile(target.rect, g.lastLayout);
       const plans = buildSlotPlans(g.windows, rects);
@@ -345,12 +345,9 @@ export async function run(argv: string[]): Promise<void> {
 
       if (g.lastLayout && onSpace.length > 0) {
         const screens = await ghostty.listScreens();
-        const target = pickScreen(
-          screens,
-          g.displayId !== undefined ? { displayId: g.displayId } : {},
-        );
-        if (g.displayId !== undefined && target.displayId !== g.displayId) {
-          console.log(`(display ${g.displayId} not connected — gathering on main)`);
+        const target = pickScreen(screens, groupDisplayOpts(g));
+        if (groupWantsDisplay(g) && !isGroupDisplay(g, target)) {
+          console.log("(the group's display isn't connected — gathering on main)");
         }
         const rects = tile(target.rect, g.lastLayout);
         const plans = buildSlotPlans(onSpace, rects);
@@ -740,10 +737,7 @@ export async function run(argv: string[]): Promise<void> {
 
           if (layout) {
             const gScreen = state.groups[name]!;
-            const target = pickScreen(
-              screens,
-              gScreen.displayId !== undefined ? { displayId: gScreen.displayId } : {},
-            );
+            const target = pickScreen(screens, groupDisplayOpts(gScreen));
             const rects = tile(target.rect, layout);
             const plans = buildSlotPlans(state.groups[name]!.windows, rects);
             if (plans.length > 0) {
@@ -919,18 +913,22 @@ export async function run(argv: string[]): Promise<void> {
         console.log("(no displays detected)");
         return;
       }
-      console.log("IDX  ID    SIZE         POSITION         ROLE");
-      console.log("---  ----  -----------  ---------------  ----");
+      console.log("IDX  ID    UUID      SIZE         POSITION         ROLE");
+      console.log("---  ----  --------  -----------  ---------------  ----");
       for (const s of screens) {
         const size = `${s.rect.width}x${s.rect.height}`;
         const pos = `${s.rect.x},${s.rect.y}`;
         const role = [s.isMain ? "main" : "", s.isPrimary ? "primary" : ""]
           .filter(Boolean)
           .join("+") || "external";
+        const uuid = s.uuid ? s.uuid.slice(0, 8) : "—";
         console.log(
-          `${String(s.index).padEnd(3)}  ${String(s.displayId).padEnd(4)}  ${size.padEnd(11)}  ${pos.padEnd(15)}  ${role}`,
+          `${String(s.index).padEnd(3)}  ${String(s.displayId).padEnd(4)}  ${uuid.padEnd(8)}  ${size.padEnd(11)}  ${pos.padEnd(15)}  ${role}`,
         );
       }
+      console.log(
+        "\nID changes when a display reconnects; UUID does not. Policy is keyed on UUID.",
+      );
     });
 
   // ── appearance ───────────────────────────────────────────────────
@@ -2126,10 +2124,29 @@ const DISPLAY_POLL_MS = 2000;
 const DISPLAY_SETTLE_MS = 3000;
 const DISPLAY_SETTLE_TIMEOUT_MS = 30000;
 
+/**
+ * Identify the current display arrangement.
+ *
+ * Keyed on each display's UUID, not its CGDirectDisplayID. A DisplayLink
+ * display is created by a userspace agent rather than enumerated from a video
+ * port, so macOS issues it a fresh id every time that agent brings it up —
+ * measured 25,26 -> 27,28 on the same two panels within a day. Keying on the id
+ * made every reconnect look like an arrangement never seen before, which is
+ * exactly the reflow `knownDisplaySets` exists to prevent. The UUID is what
+ * macOS itself keys its remembered arrangements on.
+ *
+ * Geometry comes from the full frame, not visibleFrame: visibleFrame shrinks
+ * and grows as the Dock changes edge or toggles auto-hide, which is
+ * indistinguishable here from plugging a display in.
+ */
 async function screenSignature(): Promise<string> {
   const screens = await ghostty.listScreens();
   return screens
-    .map((s) => `${s.displayId}:${s.rect.x},${s.rect.y},${s.rect.width},${s.rect.height}`)
+    .map((s) => {
+      const id = s.uuid || `id${s.displayId}`;
+      const f = s.frame;
+      return `${id}:${f.x},${f.y},${f.width},${f.height}`;
+    })
     .sort()
     .join("|");
 }
@@ -2176,10 +2193,19 @@ function tryParseGrid(input: string): GridSpec | undefined {
  * than mutating watchLoop's copy, because runOrganize saves its own state and
  * writing the stale copy back would undo it.
  */
+/** Signatures written before the key moved from CGDirectDisplayID to UUID. */
+const LEGACY_DISPLAY_SIG = /^\d+:/;
+
 async function rememberDisplaySet(sig: string): Promise<void> {
   const fresh = await loadState();
-  const known = fresh.knownDisplaySets ?? [];
-  if (known.includes(sig)) return;
+  const known = (fresh.knownDisplaySets ?? []).filter((k) => !LEGACY_DISPLAY_SIG.test(k));
+  if (known.includes(sig)) {
+    if (known.length !== (fresh.knownDisplaySets ?? []).length) {
+      fresh.knownDisplaySets = known;
+      await saveState(fresh);
+    }
+    return;
+  }
   fresh.knownDisplaySets = [...known, sig].slice(-16);
   await saveState(fresh);
 }
@@ -2502,9 +2528,31 @@ function defaultGrid(n: number): { cols: number; rows: number } {
  * `displayId` (matched against the current screens), then to the main display.
  * Returns the live ScreenInfo so the caller persists the stable displayId.
  */
+/**
+ * Which display a group asked for. UUID first: a CGDirectDisplayID does not
+ * survive a reconnect, so on a DisplayLink-driven machine matching by id sends
+ * every group to the main display on every replug.
+ */
+function isGroupDisplay(g: Group, s: ghostty.ScreenInfo): boolean {
+  if (g.displayUuid) return s.uuid === g.displayUuid;
+  if (g.displayId !== undefined) return s.displayId === g.displayId;
+  return true;
+}
+
+function groupDisplayOpts(g: Group): { displayId?: number; displayUuid?: string } {
+  return {
+    ...(g.displayId !== undefined ? { displayId: g.displayId } : {}),
+    ...(g.displayUuid !== undefined ? { displayUuid: g.displayUuid } : {}),
+  };
+}
+
+function groupWantsDisplay(g: Group): boolean {
+  return g.displayUuid !== undefined || g.displayId !== undefined;
+}
+
 function pickScreen(
   screens: ghostty.ScreenInfo[],
-  opts: { index?: number; displayId?: number },
+  opts: { index?: number; displayId?: number; displayUuid?: string },
 ): ghostty.ScreenInfo {
   if (screens.length === 0) throw new Error("no displays detected");
   if (opts.index !== undefined) {
@@ -2514,6 +2562,10 @@ function pickScreen(
       throw new Error(`no display #${opts.index} — ${have} present. See "seance screens".`);
     }
     return s;
+  }
+  if (opts.displayUuid) {
+    const s = screens.find((x) => x.uuid === opts.displayUuid);
+    if (s) return s;
   }
   if (opts.displayId !== undefined) {
     const s = screens.find((x) => x.displayId === opts.displayId);

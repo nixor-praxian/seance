@@ -140,7 +140,7 @@ Three layers, evaluated fresh on every run:
 | `seance organize auto` | Clear every pinned grid, then organize. |
 | `seance place <repo> <NxM> [--screen n]` | Tile the repo's panes now **and** pin `{display role, grid}` as its placement rule. `place <repo> auto` clears the grid pin. |
 | `seance focus <repo>` | Raise and focus the repo's first live pane. |
-| `seance screens` | List connected displays — index, stable id, size, position, role. |
+| `seance screens` | List connected displays — index, id, UUID, size, position, role. The id changes when a display reconnects; the UUID doesn't, and policy is keyed on it. |
 | `seance appearance <dark\|light\|auto>` | Pin theme resolution to an appearance (or follow macOS), repaint everything, and point Claude Code's own theme at the same polarity. |
 | `seance contrast [ratio\|off]` | Minimum WCAG contrast every palette slot must clear before it's painted (default `4.5`). No argument audits the registered pairs. |
 | `seance reflow [always\|new\|off]` | How the watcher reacts to a display change. `new` (default) re-tiles only for an arrangement it hasn't laid out before; `always` re-tiles on every change; `off` never touches geometry. No argument prints the setting. |
@@ -292,7 +292,7 @@ seance's answer is **sentinel-via-TTY**: write a unique OSC 2 title sentinel dir
 
 ### Displays: roles over ids over indices
 
-`listScreens()` enumerates `NSScreen.screens` via JXA, reading each `visibleFrame` (excludes menu bar and Dock; Finder's desktop bounds don't) in Cocoa coordinates, flipped to AX coordinates by a pure helper anchored to the primary display's frame height — which is why a monitor above the primary lands at negative AX y. On top of that, 2.0 computes *roles* per run: the `NSScreen.screens` index reorders on focus changes, and even the "stable" `CGDirectDisplayID` re-enumerates when a display reconnects — both were observed rotting in practice. Roles derived from live geometry each time are the only representation that survives.
+`listScreens()` enumerates `NSScreen.screens` via JXA, reading each `visibleFrame` (excludes menu bar and Dock; Finder's desktop bounds don't) in Cocoa coordinates, flipped to AX coordinates by a pure helper anchored to the primary display's frame height — which is why a monitor above the primary lands at negative AX y. On top of that, 2.0 computes *roles* per run: the `NSScreen.screens` index reorders on focus changes, and even the "stable" `CGDirectDisplayID` is reissued when a display reconnects — both were observed rotting in practice. Roles derived from live geometry each time are the only representation that survives. Where a specific display *must* be named — a group's target, or the signature identifying a display arrangement — seance uses the display **UUID**, the same identity macOS keys its own remembered arrangements on.
 
 ### Themes: per-window OSC, config untouched
 

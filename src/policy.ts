@@ -25,6 +25,12 @@ export interface IdentityEntry {
   pair: string;
   bg?: string | { dark: string; light: string };
   pinned?: boolean;
+  /**
+   * When this repo was given this pair. Decides who keeps a colour in a
+   * collision: the incumbent, not whoever sorts first. Absent on entries
+   * written before this existed, which are treated as the oldest.
+   */
+  assignedAt?: string;
 }
 
 export function repoOf(cwd: string, home: string): string {
@@ -101,10 +107,28 @@ export function autoGrid(n: number, screenWidth: number, minPaneWidth: number): 
   return { cols, rows };
 }
 
+/**
+ * Who keeps a pair when several live repos wear it. Pinned always wins;
+ * otherwise the incumbent does. Ordering by name alone let a transient repo
+ * evict an established one purely by sorting earlier — observed as `seance`
+ * losing its colour to a wandering `mnemosyne` pane on consecutive passes.
+ */
+function pickKeeper(colliders: string[], identity: Record<string, IdentityEntry>): string {
+  const pinned = colliders.find((repo) => identity[repo]?.pinned);
+  if (pinned) return pinned;
+  const age = (repo: string): string => identity[repo]?.assignedAt ?? "";
+  let best = colliders[0]!;
+  for (const repo of colliders) {
+    if (age(repo) < age(best) || (age(repo) === age(best) && repo < best)) best = repo;
+  }
+  return best;
+}
+
 export function assignThemes(
   liveRepos: string[],
   identity: Record<string, IdentityEntry>,
   ring: string[],
+  now: string = new Date().toISOString(),
 ): {
   identity: Record<string, IdentityEntry>;
   changes: Array<{ repo: string; pair: string; reason: "new" | "collision" }>;
@@ -125,7 +149,7 @@ export function assignThemes(
   const losers = new Set<string>();
   for (const colliders of wearers.values()) {
     if (colliders.length < 2) continue;
-    const keeper = colliders.find((repo) => identity[repo]?.pinned) ?? colliders[0]!;
+    const keeper = pickKeeper(colliders, identity);
     for (const repo of colliders) if (repo !== keeper) losers.add(repo);
   }
 
@@ -140,12 +164,22 @@ export function assignThemes(
   for (const repo of live) {
     const existing = identity[repo];
     if (existing && !losers.has(repo)) continue;
-    const pick =
-      ring.find((p) => !pairsInIdentity.has(p)) ??
-      ring.find((p) => !pairsWornByLive.has(p)) ??
-      ring[assignIndex % ring.length]!;
+    const free =
+      ring.find((p) => !pairsInIdentity.has(p)) ?? ring.find((p) => !pairsWornByLive.has(p));
+    // With nothing free, the old code handed back a pair someone else was
+    // already wearing. That leaves this repo a collision loser on the next
+    // pass, and the pass after, forever — one real watcher log accumulated
+    // 31,025 identical reassignments of a single repo this way, each one a
+    // state write. A duplicate colour is stable; an endlessly reassigned one
+    // is not, so an established repo keeps what it has.
+    if (free === undefined && existing) continue;
+    const pick = free ?? ring[assignIndex % ring.length]!;
     const bg = existing?.bg;
-    result[repo] = { pair: pick, ...(bg !== undefined ? { bg } : {}) };
+    result[repo] = {
+      pair: pick,
+      ...(bg !== undefined ? { bg } : {}),
+      assignedAt: now,
+    };
     pairsInIdentity.add(pick);
     pairsWornByLive.add(pick);
     changes.push({ repo, pair: pick, reason: existing ? "collision" : "new" });

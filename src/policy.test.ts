@@ -202,16 +202,17 @@ describe("autoGrid", () => {
 
 describe("assignThemes", () => {
   const ring = ["catppuccin", "rose-pine", "gruvbox", "ayu"];
+  const NOW = "2026-01-01T00:00:00.000Z";
 
   it("assigns new repos in alphabetical order from the ring, deduped", () => {
-    const { identity, changes } = assignThemes(["b", "a", "a"], {}, ring);
+    const { identity, changes } = assignThemes(["b", "a", "a"], {}, ring, NOW);
     expect(changes).toEqual([
       { repo: "a", pair: "catppuccin", reason: "new" },
       { repo: "b", pair: "rose-pine", reason: "new" },
     ]);
     expect(identity).toEqual({
-      a: { pair: "catppuccin" },
-      b: { pair: "rose-pine" },
+      a: { pair: "catppuccin", assignedAt: NOW },
+      b: { pair: "rose-pine", assignedAt: NOW },
     });
   });
 
@@ -231,9 +232,9 @@ describe("assignThemes", () => {
       a: { pair: "catppuccin", bg: "#111111" },
       b: { pair: "catppuccin", pinned: true },
     };
-    const { identity, changes } = assignThemes(["a", "b"], input, ring);
+    const { identity, changes } = assignThemes(["a", "b"], input, ring, NOW);
     expect(identity["b"]).toEqual({ pair: "catppuccin", pinned: true });
-    expect(identity["a"]).toEqual({ pair: "rose-pine", bg: "#111111" });
+    expect(identity["a"]).toEqual({ pair: "rose-pine", bg: "#111111", assignedAt: NOW });
     expect(changes).toEqual([{ repo: "a", pair: "rose-pine", reason: "collision" }]);
   });
 
@@ -252,33 +253,53 @@ describe("assignThemes", () => {
       a: { pair: "catppuccin", pinned: true },
       b: { pair: "catppuccin", pinned: true },
     };
-    const { identity, changes } = assignThemes(["a", "b"], input, ring);
+    const { identity, changes } = assignThemes(["a", "b"], input, ring, NOW);
     expect(identity["a"]).toEqual({ pair: "catppuccin", pinned: true });
-    expect(identity["b"]).toEqual({ pair: "rose-pine" });
+    expect(identity["b"]).toEqual({ pair: "rose-pine", assignedAt: NOW });
     expect(changes).toEqual([{ repo: "b", pair: "rose-pine", reason: "collision" }]);
   });
 
   it("prefers pairs unused by anyone over pairs worn by non-live repos", () => {
     const input: Record<string, IdentityEntry> = { offline: { pair: "catppuccin" } };
-    const { identity } = assignThemes(["a"], input, ring);
-    expect(identity["a"]).toEqual({ pair: "rose-pine" });
+    const { identity } = assignThemes(["a"], input, ring, NOW);
+    expect(identity["a"]).toEqual({ pair: "rose-pine", assignedAt: NOW });
   });
 
   it("falls back to pairs worn only by non-live repos when all pairs are in identity", () => {
     const input: Record<string, IdentityEntry> = { offline: { pair: "catppuccin" } };
-    const { identity, changes } = assignThemes(["a"], input, ["catppuccin"]);
-    expect(identity["a"]).toEqual({ pair: "catppuccin" });
+    const { identity, changes } = assignThemes(["a"], input, ["catppuccin"], NOW);
+    expect(identity["a"]).toEqual({ pair: "catppuccin", assignedAt: NOW });
     expect(changes).toEqual([{ repo: "a", pair: "catppuccin", reason: "new" }]);
   });
 
   it("round-robins in assignment order once the ring is exhausted", () => {
-    const { identity, changes } = assignThemes(["a", "b", "c"], {}, ["p1", "p2"]);
+    const { identity, changes } = assignThemes(["a", "b", "c"], {}, ["p1", "p2"], NOW);
     expect(identity).toEqual({
-      a: { pair: "p1" },
-      b: { pair: "p2" },
-      c: { pair: "p1" },
+      a: { pair: "p1", assignedAt: NOW },
+      b: { pair: "p2", assignedAt: NOW },
+      c: { pair: "p1", assignedAt: NOW },
     });
     expect(changes.map((c) => c.reason)).toEqual(["new", "new", "new"]);
+  });
+
+  it("settles instead of reassigning forever once the ring is exhausted", () => {
+    // The old fallback handed a loser a pair someone else already wore, so it
+    // was a loser again next pass, and every pass after. A real watcher log
+    // accumulated 31,025 identical reassignments of one repo this way.
+    const first = assignThemes(["a", "b", "c"], {}, ["p1", "p2"], NOW);
+    const second = assignThemes(["a", "b", "c"], first.identity, ["p1", "p2"], "2026-02-02T00:00:00.000Z");
+    expect(second.changes).toEqual([]);
+    expect(second.identity).toEqual(first.identity);
+  });
+
+  it("the incumbent keeps the pair when a newer repo collides", () => {
+    const input: Record<string, IdentityEntry> = {
+      established: { pair: "catppuccin", assignedAt: "2026-01-01T00:00:00.000Z" },
+      aardvark: { pair: "catppuccin", assignedAt: "2026-06-01T00:00:00.000Z" },
+    };
+    const { identity, changes } = assignThemes(["aardvark", "established"], input, ring, NOW);
+    expect(identity["established"]).toEqual(input["established"]);
+    expect(changes).toEqual([{ repo: "aardvark", pair: "rose-pine", reason: "collision" }]);
   });
 
   it("passes non-live entries through untouched", () => {

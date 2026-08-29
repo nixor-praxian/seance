@@ -109,6 +109,7 @@ exactly one Ghostty instance, the watcher running the current build, and `dist/`
 
 ## Modifying seance itself
 
-Read `references/hacking.md` before editing the codebase. It covers the invariants that must not
-be re-derived (window targeting, batched bounds-setting, one Ghostty instance), the build-and-
-restart trap that makes fixes look ineffective, and the testing conventions.
+Read `references/development.md` before editing the codebase. It covers the build-and-restart step
+that makes a correct fix look inert if skipped, the invariants that must not be re-derived (window
+targeting, batched bounds-setting, one Ghostty instance, minimized panes), the module boundaries,
+and the testing conventions.

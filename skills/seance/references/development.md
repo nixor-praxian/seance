@@ -1,4 +1,4 @@
-# Modifying seance
+# Developing seance
 
 Read before editing `~/GitHub/seance`. These are the things that cost real time to rediscover.
 

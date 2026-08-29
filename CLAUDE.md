@@ -72,6 +72,7 @@ TypeScript is strict: `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, 
 
 - macOS only. Linux Ghostty has no AppleScript dictionary; the AX path doesn't exist.
 - Multi-display works (`grid --screen <n>`, `seance screens`), but two macOS realities remain: (a) a window on another **Space** is invisible to Accessibility, so seance can't tile it until it's on the current Space — externals that cycle on/off strand windows this way (`gather` surfaces them); (b) display *geometry* is not identity — two identical monitors can share size, position-independent name (`BASE CASE`), vendor and model, so only the UUID separates them.
+- **Exact tiling is impossible.** Ghostty snaps a window to whole character cells, and cell size follows each pane's own font size, so a requested rect is rounded unpredictably (measured: 548x540 → 548x602, 432x1079 → 443x1021). `setWindowBounds` verifies the *origin* only, within a 40px tolerance — macOS also refuses to seat a title bar flush against a display's top edge, a consistent ~25px push down. Windows that grow past their cell are nudged back so they stay on their assigned display, at the cost of overlapping the neighbour above.
 - `cwd` for `windows --assign` comes from `lsof` against the foreground PID — may return nothing for sandboxed children (e.g. some Claude Code invocations).
 - TTY-based identity dies with the shell. Closing a window invalidates its `ttyPath`; you have to `group add` again from the new shell.
 

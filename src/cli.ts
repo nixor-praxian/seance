@@ -1869,7 +1869,7 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
   }
 
   await ghostty.activate();
-  const { placed, stranded } = await ghostty.setWindowBounds(plans);
+  const { placed, stranded, drift } = await ghostty.setWindowBounds(plans);
 
   const { painted, appearance } = await paintAll(state, live);
 
@@ -1878,6 +1878,7 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
   for (const c of changes) console.log(`theme ${c.reason === "new" ? "assigned" : "reassigned"}: ${c.repo} → ${c.pair}`);
   console.log(`organized ${placed.length}/${active.length} pane(s), painted ${painted} (${appearance})`);
   for (const line of summary) console.log(line);
+  reportDrift(drift);
   if (minimized.length > 0) {
     const repoCounts = new Map<string, number>();
     for (const p of minimized) repoCounts.set(p.repo, (repoCounts.get(p.repo) ?? 0) + 1);
@@ -1901,6 +1902,22 @@ async function paintAll(
     if (await paintPane(state, p, appearance, paletteCache)) painted++;
   }
   return { painted, appearance };
+}
+
+/**
+ * Cells Ghostty could not fit a window into. Worth saying out loud: an enlarged
+ * window overlaps its neighbour, and at the edge of a display it spills onto the
+ * next one, which reads as a tiling bug rather than a size floor.
+ */
+function reportDrift(drift: ghostty.WindowDrift[]): void {
+  if (drift.length === 0) return;
+  const desc = drift
+    .map((d) => `${d.label ?? d.ttyPath.replace(/^\/dev\//, "")} ${d.want.width}x${d.want.height}→${d.got.width}x${d.got.height}`)
+    .join(", ");
+  console.log(
+    `  ${drift.length} pane(s) too small for Ghostty to render — it enlarged them: ${desc}`,
+  );
+  console.log('  raise "layout.minPaneHeight" in state.json if this keeps happening');
 }
 
 async function reportStranded(
@@ -2002,7 +2019,7 @@ async function runArrange(state: SeanceState, opts: ArrangeOptions): Promise<voi
   }
 
   await ghostty.activate();
-  const { placed, stranded } = await ghostty.setWindowBounds(plans);
+  const { placed, stranded, drift } = await ghostty.setWindowBounds(plans);
 
   const { painted, appearance } = await paintAll(state, live);
   await saveState(state);
@@ -2014,6 +2031,7 @@ async function runArrange(state: SeanceState, opts: ArrangeOptions): Promise<voi
     `arranged ${placed.length}/${active.length} pane(s), painted ${painted} (${appearance})${opts.name !== undefined ? ` — arrangement "${opts.name}"` : ""}`,
   );
   for (const line of summary) console.log(line);
+  reportDrift(drift);
   if (minimized.length > 0) {
     const repoCounts = new Map<string, number>();
     for (const p of minimized) repoCounts.set(p.repo, (repoCounts.get(p.repo) ?? 0) + 1);

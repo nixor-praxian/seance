@@ -63,6 +63,13 @@ export async function loadState(): Promise<SeanceState> {
  * the assignable ring (enforced by the caller building the ring) — it's a
  * common global Ghostty default, i.e. the "unpainted" look.
  */
+/**
+ * Smallest pane height seance will plan for. Measured, not chosen: Ghostty
+ * enlarged a requested 360px window to 422px and a 540px one to 602px on the
+ * machine this was found on.
+ */
+export const MIN_PANE_HEIGHT = 440;
+
 export function ensurePolicy(state: SeanceState): void {
   if (!state.identity) {
     const identity: NonNullable<SeanceState["identity"]> = {};
@@ -76,8 +83,14 @@ export function ensurePolicy(state: SeanceState): void {
     state.identity = identity;
   }
   state.placement ??= [{ repo: "*", role: "main" }];
-  state.layout ??= { minPaneWidth: 384, minPaneHeight: 256 };
-  state.layout.minPaneHeight ??= 256;
+  state.layout ??= { minPaneWidth: 384, minPaneHeight: MIN_PANE_HEIGHT };
+  state.layout.minPaneHeight ??= MIN_PANE_HEIGHT;
+  // 256 was fiction: Ghostty snaps a window to whole character cells and will
+  // not go below roughly 420px for a default-sized font, so a 360px cell simply
+  // produced a 422px window that overlapped its neighbour — and, at the bottom
+  // of a display, spilled onto the next one. Raise an existing floor that is
+  // below what can actually be rendered; leave a deliberately higher one alone.
+  if (state.layout.minPaneHeight < MIN_PANE_HEIGHT) state.layout.minPaneHeight = MIN_PANE_HEIGHT;
 }
 
 export async function saveState(state: SeanceState): Promise<void> {

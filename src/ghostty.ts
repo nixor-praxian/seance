@@ -154,10 +154,25 @@ export async function currentTty(): Promise<string | undefined> {
  *
  * Per-window TTY is required (captured at `group add` time).
  */
+/** A window Ghostty could not make as small as the cell it was given. */
+export interface WindowDrift {
+  ttyPath: string;
+  label?: string;
+  want: Rect;
+  got: Rect;
+}
+
+/**
+ * How far a window's origin may sit from the requested one and still count as
+ * placed. macOS declines to seat a title bar flush against the top edge of a
+ * display, which shows up as a consistent ~25px push downward.
+ */
+const ORIGIN_TOLERANCE = 40;
+
 export async function setWindowBounds(
   plans: Array<{ ttyPath: string; rect: Rect; label?: string }>,
-): Promise<{ placed: string[]; stranded: string[] }> {
-  if (plans.length === 0) return { placed: [], stranded: [] };
+): Promise<{ placed: string[]; stranded: string[]; drift: WindowDrift[] }> {
+  if (plans.length === 0) return { placed: [], stranded: [], drift: [] };
 
   const stamp = Date.now().toString(36);
   const stamped = plans.map((p, i) => ({
@@ -176,6 +191,7 @@ export async function setWindowBounds(
   // are reported, not fatal.
   const MAX_ROUNDS = 5;
   const placed: string[] = [];
+  const drift: WindowDrift[] = [];
   let remaining = stamped;
 
   for (let round = 0; round < MAX_ROUNDS && remaining.length > 0; round++) {
@@ -215,7 +231,7 @@ export async function setWindowBounds(
     const applies = remaining
       .map(
         (s, k) =>
-          `if w${k} is not missing value then\n          try\n            set position of w${k} to {${s.rect.x}, ${s.rect.y}}\n            set size of w${k} to {${s.rect.width}, ${s.rect.height}}\n            set ok to ok & "${s.i} "\n          end try\n        end if`,
+          `if w${k} is not missing value then\n          try\n            set position of w${k} to {${s.rect.x}, ${s.rect.y}}\n            set size of w${k} to {${s.rect.width}, ${s.rect.height}}\n            set p to position of w${k}\n            set z to size of w${k}\n            set ok to ok & "${s.i}:" & (item 1 of p as string) & "," & (item 2 of p as string) & "," & (item 1 of z as string) & "," & (item 2 of z as string) & " "\n          end try\n        end if`,
       )
       .join("\n        ");
     const script = `
@@ -229,16 +245,64 @@ export async function setWindowBounds(
       end tell
     `;
     const okRaw = await osascript(script).catch(() => "");
-    const okIdx = new Set(
-      okRaw
-        .split(/\s+/)
-        .filter((s) => s.length > 0)
-        .map(Number),
-    );
-    for (const s of remaining) {
-      if (okIdx.has(s.i)) placed.push(s.ttyPath);
+    // Setting a position can silently do nothing — most often when the sentinel
+    // resolved to a window whose title is being rewritten under us. Trusting the
+    // fact that the AppleScript ran made `arrange` report a pane placed while it
+    // sat untouched across two displays, so the applied rect is read back in the
+    // same script and compared.
+    //
+    // Origin is compared, not size: Ghostty snaps a window's size to whole
+    // character cells, so a request for 540px legitimately comes back as 602.
+    // macOS also refuses to seat a title bar flush against a display's top edge,
+    // hence a tolerance rather than equality.
+    const landed = new Map<number, Rect>();
+    for (const token of okRaw.split(/\s+/).filter((t) => t.length > 0)) {
+      const [idx, rect] = token.split(":");
+      const [x, y, w, h] = (rect ?? "").split(",").map(Number);
+      if (idx === undefined || x === undefined || y === undefined) continue;
+      landed.set(Number(idx), { x, y, width: w ?? 0, height: h ?? 0 });
     }
-    remaining = remaining.filter((s) => !okIdx.has(s.i));
+    for (const s of remaining) {
+      const got = landed.get(s.i);
+      if (!got) continue;
+      if (Math.abs(got.x - s.rect.x) <= ORIGIN_TOLERANCE && Math.abs(got.y - s.rect.y) <= ORIGIN_TOLERANCE) {
+        placed.push(s.ttyPath);
+        if (got.width > s.rect.width + 1 || got.height > s.rect.height + 1) {
+          drift.push({ ttyPath: s.ttyPath, ...(s.label ? { label: s.label } : {}), want: s.rect, got });
+        }
+      }
+    }
+    const done = new Set(placed);
+    remaining = remaining.filter((s) => !done.has(s.ttyPath));
+  }
+
+  // Ghostty snaps a window to whole character cells, so a cell can come back
+  // taller or wider than it was asked for. Left alone, a bottom-row window then
+  // hangs past the edge of its display and onto the next one — the seance pane
+  // ended up 62px deep into the laptop screen. Nudge each grown window back up
+  // and left so its far edge lands where the cell's did: it may now overlap the
+  // neighbour above, but it stays on the display it was assigned to.
+  //
+  // The sentinels are still on the titles at this point; cleanup runs below.
+  if (drift.length > 0) {
+    const fixes = drift
+      .map((d) => {
+        const s = stamped.find((x) => x.ttyPath === d.ttyPath);
+        if (!s) return "";
+        const x = d.want.x + Math.min(0, d.want.width - d.got.width);
+        const y = d.want.y + Math.min(0, d.want.height - d.got.height);
+        return (
+          `try\n  set w to first window whose name ends with "${s.sentinel.replace(/"/g, '\\"')}"\n` +
+          `  set position of w to {${x}, ${y}}\nend try`
+        );
+      })
+      .filter(Boolean)
+      .join("\n        ");
+    if (fixes) {
+      await osascript(
+        `tell application "System Events"\n  tell process "${GHOSTTY_APP_NAME}"\n        ${fixes}\n  end tell\nend tell`,
+      ).catch(() => undefined);
+    }
   }
 
   // Cleanup: undo the sentinel titles we wrote, so windows don't show
@@ -254,7 +318,7 @@ export async function setWindowBounds(
     }),
   );
 
-  return { placed, stranded: remaining.map((s) => s.ttyPath) };
+  return { placed, stranded: remaining.map((s) => s.ttyPath), drift };
 }
 
 export interface PerceivedPane {

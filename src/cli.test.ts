@@ -253,28 +253,59 @@ describe("seance CLI (black-box, SEANCE_HOME isolated)", () => {
     });
   });
 
-  it("reflow persists on/off and reports the current setting", async () => {
+  type ReflowState = { reflowMode?: string; watchReflow?: boolean };
+
+  it("reflow defaults to new and persists every mode", async () => {
     await withSeanceDir(async (dir) => {
       const initial = await runSeance(["reflow"], dir);
       expect(initial.exitCode).toBe(0);
-      expect(initial.stdout).toContain("reflow on display change = on");
+      expect(initial.stdout).toContain("reflow on display change = new");
 
       const off = await runSeance(["reflow", "off"], dir);
       expect(off.stdout).toContain("reflow on display change = off");
       expect(off.stdout).toContain("still paints panes");
-      expect((await readState(dir) as { watchReflow?: boolean }).watchReflow).toBe(false);
+      expect((await readState(dir) as ReflowState).reflowMode).toBe("off");
 
-      const on = await runSeance(["reflow", "ON"], dir);
-      expect(on.stdout).toContain("reflow on display change = on");
-      expect((await readState(dir) as { watchReflow?: boolean }).watchReflow).toBe(true);
+      const always = await runSeance(["reflow", "ALWAYS"], dir);
+      expect(always.stdout).toContain("reflow on display change = always");
+      expect((await readState(dir) as ReflowState).reflowMode).toBe("always");
+
+      const back = await runSeance(["reflow", "new"], dir);
+      expect(back.stdout).toContain("reflow on display change = new");
+      expect((await readState(dir) as ReflowState).reflowMode).toBe("new");
     });
   });
 
-  it("reflow rejects a mode that is neither on nor off", async () => {
+  it("reflow accepts the retired \"on\" spelling as new", async () => {
+    await withSeanceDir(async (dir) => {
+      const r = await runSeance(["reflow", "on"], dir);
+      expect(r.stdout).toContain("reflow on display change = new");
+      expect((await readState(dir) as ReflowState).reflowMode).toBe("new");
+    });
+  });
+
+  it("migrates the retired watchReflow:false to reflow off", async () => {
+    await withSeanceDir(async (dir) => {
+      await writeState(dir, { watchReflow: false });
+
+      // Read-only: the migration applies on load, so the setting reports
+      // correctly while state.json still holds the legacy key.
+      const read = await runSeance(["reflow"], dir);
+      expect(read.stdout).toContain("reflow on display change = off");
+
+      // Any write flushes it: reflowMode replaces watchReflow on disk.
+      await runSeance(["contrast", "7"], dir);
+      const after = (await readState(dir)) as ReflowState;
+      expect(after.reflowMode).toBe("off");
+      expect(after.watchReflow).toBeUndefined();
+    });
+  });
+
+  it("reflow rejects an unknown mode", async () => {
     await withSeanceDir(async (dir) => {
       const bad = await runSeance(["reflow", "sometimes"], dir);
       expect(bad.exitCode).not.toBe(0);
-      expect(bad.stderr).toContain('reflow takes "on" or "off"');
+      expect(bad.stderr).toContain('reflow takes "always", "new" or "off"');
     });
   });
 

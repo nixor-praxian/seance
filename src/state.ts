@@ -36,6 +36,12 @@ export async function loadState(): Promise<SeanceState> {
     if (parsed.version !== 1) {
       throw new Error(`unsupported state version ${parsed.version}`);
     }
+    // `watchReflow: false` shipped briefly before the three-way mode replaced it.
+    if (parsed.reflowMode === undefined) {
+      const legacy = (parsed as { watchReflow?: boolean }).watchReflow;
+      if (legacy === false) parsed.reflowMode = "off";
+    }
+    delete (parsed as { watchReflow?: boolean }).watchReflow;
     const parsedThemes = parsed.themes ?? {};
     return {
       ...emptyState(),

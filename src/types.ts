@@ -105,9 +105,17 @@ export interface SeanceState {
    */
   minContrast?: number;
   /**
-   * Whether the watcher re-tiles when the display set changes. Absent = on.
-   * `seance reflow off` leaves window geometry alone on hotplug; painting,
-   * theme assignment and the Claude Code theme self-heal are unaffected.
+   * How the watcher reacts when the display set changes. Absent = "new".
+   *
+   * "new" re-tiles only for a display arrangement it has not laid out before.
+   * macOS restores window positions itself when a configuration it knows comes
+   * back, and that restoration is the layout the user actually had — re-deriving
+   * one on top of it throws the real layout away.
    */
-  watchReflow?: boolean;
+  reflowMode?: "always" | "new" | "off";
+  /**
+   * Display-set signatures the watcher has already laid out (or booted into).
+   * Derived, never authored; capped. Only consulted in "new" mode.
+   */
+  knownDisplaySets?: string[];
 }

@@ -11,3 +11,6 @@ coverage/
 __pycache__/
 *.pyc
 .ruff_cache/
+
+# Machine-specific audits — hardware identifiers, never published
+docs/local/

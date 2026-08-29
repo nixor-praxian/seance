@@ -86,9 +86,15 @@ export function setGroupTheme(state: SeanceState, name: string, themeName: strin
   return g;
 }
 
-export function setGroupDisplay(state: SeanceState, name: string, displayId: number): Group {
+export function setGroupDisplay(
+  state: SeanceState,
+  name: string,
+  displayId: number,
+  displayUuid?: string,
+): Group {
   const g = getGroup(state, name);
   g.displayId = displayId;
+  if (displayUuid) g.displayUuid = displayUuid;
   g.updatedAt = new Date().toISOString();
   return g;
 }

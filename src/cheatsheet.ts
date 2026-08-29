@@ -14,7 +14,7 @@ Panes organize themselves by repo. One verb does everything.
 - \`seance focus <repo>\` — raise and focus that repo's first pane.
 - \`seance appearance dark|light|auto\` — pin theme resolution (or follow macOS), repaint everything.
 - \`seance reflow always|new|off\` — how the watcher reacts when you plug a display in. \`new\` (default) only re-tiles arrangements it hasn't seen; \`always\` re-tiles every time; \`off\` never touches geometry.
-- \`seance screens\` — list displays: index, stable id, size, position, role.
+- \`seance screens\` — list displays: index, id, UUID, size, position, role. The id changes on reconnect; the UUID doesn't.
 
 ## Sessions
 

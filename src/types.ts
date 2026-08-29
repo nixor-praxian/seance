@@ -45,10 +45,18 @@ export interface Group {
   background?: string | { dark: string; light: string };
   lastLayout?: LayoutSpec;
   /**
-   * Target display, stored as its stable CGDirectDisplayID (NSScreenNumber),
-   * not the volatile NSScreen.screens index. Absent / undefined = main display.
+   * Target display as a CGDirectDisplayID. Kept for state written before
+   * `displayUuid` existed, and refreshed whenever a group is retargeted — but
+   * it does not survive a reconnect (see ScreenInfo.displayId), so
+   * `displayUuid` wins when both are present. Absent = main display.
    */
   displayId?: number;
+  /**
+   * Target display as its stable UUID. Unlike displayId this survives a
+   * reconnect, including DisplayLink displays, whose ids are reissued every
+   * time their userspace agent restarts.
+   */
+  displayUuid?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { promises as fs } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -24,6 +24,8 @@ import {
   type PlacementRule,
   type PolicyScreen,
   type Role,
+  liveShades,
+  reflowDecision,
 } from "./policy.js";
 import {
   assignFamilies,
@@ -72,6 +74,9 @@ import {
   DEFAULT_MIN_CONTRAST,
   contrastRepairs,
   enforceContrast,
+  shadeBackground,
+  tintBackground,
+  pickTint,
 } from "./contrast.js";
 import type { GridSpec, Group, LayoutSpec, Rect, SeanceState, WindowRef } from "./types.js";
 
@@ -1079,7 +1084,8 @@ export async function run(argv: string[]): Promise<void> {
       "Group every active (non-minimized) pane by repo, spread the repos across every connected display, tile each one into a shape that suits that display, and paint. Takes no shape — use `organize` for that. `arrange <name>` applies a saved arrangement.",
     )
     .option("--save <name>", "record where the windows are now as a named arrangement, moving nothing")
-    .action(async (name: string | undefined, opts: { save?: string }) => {
+    .option("--in-place", "keep every pane on the display it is on now, and tile each display")
+    .action(async (name: string | undefined, opts: { save?: string; inPlace?: boolean }) => {
       const state = await loadState();
       ensurePolicy(state);
       if (name !== undefined && opts.save !== undefined) {
@@ -1094,6 +1100,7 @@ export async function run(argv: string[]): Promise<void> {
       await runArrange(state, {
         ...(name !== undefined ? { name } : {}),
         ...(opts.save !== undefined ? { save: opts.save } : {}),
+        ...(opts.inPlace ? { inPlace: true } : {}),
       });
     });
 
@@ -1663,7 +1670,7 @@ async function perceiveWorld(): Promise<{ live: WorldPane[]; home: string }> {
     live: panes.map((p) => ({
       ttyPath: p.ttyPath,
       cwd: p.cwd ?? home,
-      repo: repoOf(p.cwd ?? home, home),
+      repo: repoOf(p.root ?? p.cwd ?? home, home),
       command: p.command,
     })),
   };
@@ -1733,6 +1740,71 @@ function themeRing(state: SeanceState): string[] {
     .filter((n) => n !== "Catppuccin");
 }
 
+const themeBackgroundCache = new Map<string, string>();
+
+/** The background a repo's panes are painted with, before any shade. */
+async function paintedBackground(
+  state: SeanceState,
+  entry: IdentityEntry,
+  appearance: Appearance,
+): Promise<string | undefined> {
+  const override = bgFor(entry, appearance);
+  if (override) return override;
+  const pair = getTheme(state, entry.pair);
+  if (!pair) return undefined;
+  const themeName = resolveTheme(pair, appearance);
+  let bg = themeBackgroundCache.get(themeName);
+  if (bg === undefined) {
+    bg = await parseThemeFile(themeFilePath(themeName)).then((t) => t.background, () => undefined);
+    if (bg === undefined) return undefined;
+    themeBackgroundCache.set(themeName, bg);
+  }
+  return tintBackground(bg, entry.tint ?? null);
+}
+
+/**
+ * Give each live repo without one a tint, chosen against the backgrounds of
+ * the other live repos. Established repos choose first, so a newcomer moves
+ * away from them rather than the reverse. Returns what it assigned.
+ */
+async function assignTints(
+  state: SeanceState,
+  liveRepos: string[],
+  appearance: Appearance,
+): Promise<Array<{ repo: string; tint: number | null }>> {
+  const identity = state.identity ?? {};
+  const live = [...new Set(liveRepos)].filter((r) => identity[r]);
+  const pending = live
+    .filter((r) => identity[r]!.tint === undefined && identity[r]!.bg == null)
+    .sort((a, b) => compareAge(identity, a, b));
+  const changes: Array<{ repo: string; tint: number | null }> = [];
+  for (const repo of pending) {
+    const others: string[] = [];
+    for (const other of live) {
+      if (other === repo) continue;
+      const bg = await paintedBackground(state, identity[other]!, appearance);
+      if (bg) others.push(bg);
+    }
+    const entry = identity[repo]!;
+    const pair = getTheme(state, entry.pair);
+    if (!pair) continue;
+    const own = await paintedBackground(state, { ...entry, tint: null }, appearance);
+    if (!own) continue;
+    const tint = pickTint(own, others);
+    identity[repo] = { ...entry, tint };
+    changes.push({ repo, tint });
+  }
+  state.identity = identity;
+  return changes;
+}
+
+function compareAge(identity: Record<string, IdentityEntry>, a: string, b: string): number {
+  const pinned = Number(!!identity[b]?.pinned) - Number(!!identity[a]?.pinned);
+  if (pinned !== 0) return pinned;
+  const age = (identity[a]?.assignedAt ?? "").localeCompare(identity[b]?.assignedAt ?? "");
+  return age || a.localeCompare(b);
+}
+
 function bgFor(entry: IdentityEntry, appearance: Appearance): string | undefined {
   if (entry.bg == null) return undefined;
   if (typeof entry.bg === "string") return entry.bg;
@@ -1760,18 +1832,22 @@ async function paintPane(
   pane: WorldPane,
   appearance: Appearance,
   paletteCache: Map<string, ThemePalette>,
+  shade = 0,
 ): Promise<boolean> {
   const entry = state.identity?.[pane.repo];
   if (!entry) return false;
   const pair = getTheme(state, entry.pair);
   if (!pair) return false;
   const themeName = resolveTheme(pair, appearance);
-  const bg = bgFor(entry, appearance);
-  const key = `${themeName}|${bg ?? ""}`;
+  const override = bgFor(entry, appearance);
+  const key = `${themeName}|${override ?? ""}|${entry.tint ?? ""}|${shade}`;
   let palette = paletteCache.get(key);
   if (!palette) {
     try {
-      palette = guardPalette(state, await parseThemeFile(themeFilePath(themeName)), bg);
+      const base = await parseThemeFile(themeFilePath(themeName));
+      const painted = override ?? (entry.tint != null ? tintBackground(base.background, entry.tint) : undefined);
+      const bg = shade > 0 ? shadeBackground(painted ?? base.background, shade) : painted;
+      palette = guardPalette(state, base, bg);
     } catch {
       return false;
     }
@@ -1869,7 +1945,7 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
   }
 
   await ghostty.activate();
-  const { placed, stranded, drift } = await ghostty.setWindowBounds(plans);
+  const { placed, stranded, drift, undersized } = await ghostty.setWindowBounds(plans);
 
   const { painted, appearance } = await paintAll(state, live);
 
@@ -1879,6 +1955,7 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
   console.log(`organized ${placed.length}/${active.length} pane(s), painted ${painted} (${appearance})`);
   for (const line of summary) console.log(line);
   reportDrift(drift);
+  reportUndersized(undersized);
   if (minimized.length > 0) {
     const repoCounts = new Map<string, number>();
     for (const p of minimized) repoCounts.set(p.repo, (repoCounts.get(p.repo) ?? 0) + 1);
@@ -1898,8 +1975,10 @@ async function paintAll(
   const appearance = state.appearance ?? (await ghostty.currentAppearance());
   const paletteCache = new Map<string, ThemePalette>();
   let painted = 0;
+  await assignTints(state, live.map((p) => p.repo), appearance);
+  const shades = liveShades(live.map((p) => p.repo), state.identity ?? {});
   for (const p of live) {
-    if (await paintPane(state, p, appearance, paletteCache)) painted++;
+    if (await paintPane(state, p, appearance, paletteCache, shades.get(p.repo))) painted++;
   }
   return { painted, appearance };
 }
@@ -1920,6 +1999,14 @@ function reportDrift(drift: ghostty.WindowDrift[]): void {
   console.log('  raise "layout.minPaneHeight" in state.json if this keeps happening');
 }
 
+function reportUndersized(undersized: ghostty.WindowDrift[]): void {
+  if (undersized.length === 0) return;
+  const desc = undersized
+    .map((d) => `${d.label ?? d.ttyPath.replace(/^\/dev\//, "")} ${d.want.width}x${d.want.height}→${d.got.width}x${d.got.height}`)
+    .join(", ");
+  console.log(`  ${undersized.length} pane(s) moved but kept the wrong size: ${desc}`);
+}
+
 async function reportStranded(
   stranded: string[],
   repoByTty: Map<string, string>,
@@ -1937,6 +2024,8 @@ interface ArrangeOptions {
   name?: string;
   /** Record the current repo→display split under this name; moves nothing. */
   save?: string;
+  /** Tile each display's panes where they are instead of redistributing. */
+  inPlace?: boolean;
 }
 
 /**
@@ -1984,24 +2073,58 @@ async function runArrange(state: SeanceState, opts: ArrangeOptions): Promise<voi
     return;
   }
 
-  const families = orderFamilies(active, rules);
-  const { byScreen, autoPlacement, notes } = assignFamilies(
-    families.map((f) => ({ repo: f.repo, count: f.panes.length })),
-    rules,
-    state.autoPlacement ?? {},
-    roles,
-    budget,
-  );
-  state.autoPlacement = autoPlacement;
+  // Which families go on which display. Normally decided by balancing across
+  // the three roles; --in-place keeps every pane on the display it is on now,
+  // which is also the only way to lay out a fourth or fifth display.
+  const layoutPlan = new Map<string, { label: string; families: PaneFamily[] }>();
+  let notes: PlacementNote[] = [];
+  if (opts.inPlace) {
+    const rects = await ghostty.currentRectsByTty(
+      active.map((p) => ({ ttyPath: p.ttyPath, label: p.repo })),
+    );
+    const panesByScreen = new Map<string, WorldPane[]>();
+    const unread = active.filter((p) => !rects.has(p.ttyPath)).map((p) => p.repo);
+    if (unread.length > 0) {
+      console.log(`not tiled, position unreadable (another Space?): ${unread.join(", ")}`);
+    }
+    for (const pane of active) {
+      const rect = rects.get(pane.ttyPath);
+      if (!rect) continue;
+      const key = screenKeyForRect(rect, policyScreens);
+      panesByScreen.set(key, [...(panesByScreen.get(key) ?? []), pane]);
+    }
+    for (const [key, panes] of panesByScreen) {
+      const index = policyScreens.findIndex((s) => s.key === key);
+      layoutPlan.set(key, {
+        label: roleOf.get(key) ?? `display ${index}`,
+        families: orderFamilies(panes, rules),
+      });
+    }
+  } else {
+    const families = orderFamilies(active, rules);
+    const assigned = assignFamilies(
+      families.map((f) => ({ repo: f.repo, count: f.panes.length })),
+      rules,
+      state.autoPlacement ?? {},
+      roles,
+      budget,
+    );
+    state.autoPlacement = assigned.autoPlacement;
+    notes = assigned.notes;
+    const byRepo = new Map(families.map((f) => [f.repo, f]));
+    for (const [key, { role, repos: reposOn }] of assigned.byScreen) {
+      layoutPlan.set(key, { label: role, families: reposOn.map((repo) => byRepo.get(repo)!) });
+    }
+  }
 
-  const byRepo = new Map(families.map((f) => [f.repo, f]));
   const plans: Array<{ ttyPath: string; rect: Rect; label?: string }> = [];
   const summary: string[] = [];
-  for (const [key, { role, repos: reposOn }] of byScreen) {
+  for (const [key, { label: role, families: familiesOn }] of layoutPlan) {
     const screen = policyScreens.find((s) => s.key === key)!;
-    const requests: FamilyRequest[] = reposOn.map((repo) => {
-      const pin = rules.find((r) => r.repo === repo)?.grid;
-      return { repo, count: byRepo.get(repo)!.panes.length, ...(pin ? { grid: pin } : {}) };
+    const byRepo = new Map(familiesOn.map((f) => [f.repo, f]));
+    const requests: FamilyRequest[] = familiesOn.map((f) => {
+      const pin = rules.find((r) => r.repo === f.repo)?.grid;
+      return { repo: f.repo, count: f.panes.length, ...(pin ? { grid: pin } : {}) };
     });
     const placements = layoutScreen(screen.rect, requests, budget);
     let panes = 0;
@@ -2019,7 +2142,7 @@ async function runArrange(state: SeanceState, opts: ArrangeOptions): Promise<voi
   }
 
   await ghostty.activate();
-  const { placed, stranded, drift } = await ghostty.setWindowBounds(plans);
+  const { placed, stranded, drift, undersized } = await ghostty.setWindowBounds(plans);
 
   const { painted, appearance } = await paintAll(state, live);
   await saveState(state);
@@ -2032,6 +2155,7 @@ async function runArrange(state: SeanceState, opts: ArrangeOptions): Promise<voi
   );
   for (const line of summary) console.log(line);
   reportDrift(drift);
+  reportUndersized(undersized);
   if (minimized.length > 0) {
     const repoCounts = new Map<string, number>();
     for (const p of minimized) repoCounts.set(p.repo, (repoCounts.get(p.repo) ?? 0) + 1);
@@ -2261,14 +2385,23 @@ async function watchLoop(intervalMs: number): Promise<void> {
       const synced = await syncClaudeCodeTheme(appearance);
       if (synced) console.log(`watch: Claude Code theme reverted → restored ${synced}`);
 
+      const tints = await assignTints(state, repos, appearance);
+      if (tints.length > 0) {
+        await saveState(state);
+        for (const t of tints) console.log(`watch: tint ${t.repo} → ${t.tint === null ? "theme's own" : `${t.tint}°`}`);
+      }
+      const tinted = state.identity ?? identity;
+      const shades = liveShades(repos, tinted);
       for (const p of live) {
-        const entry = identity[p.repo];
+        const entry = tinted[p.repo];
         if (!entry) continue;
-        const sig = `${entry.pair}|${JSON.stringify(entry.bg ?? null)}|${appearance}`;
+        const shade = shades.get(p.repo) ?? 0;
+        const sig = `${entry.pair}|${JSON.stringify(entry.bg ?? null)}|${entry.tint ?? ""}|${appearance}|${shade}`;
         if (paintedSig.get(p.ttyPath) === sig) continue;
-        if (await paintPane(state, p, appearance, paletteCache)) {
+        if (await paintPane(state, p, appearance, paletteCache, shade)) {
           paintedSig.set(p.ttyPath, sig);
-          console.log(`watch: painted ${p.ttyPath.replace(/^\/dev\//, "")} (${p.repo} → ${entry.pair})`);
+          const label = shade > 0 ? `${entry.pair} shade ${shade}` : entry.pair;
+          console.log(`watch: painted ${p.ttyPath.replace(/^\/dev\//, "")} (${p.repo} → ${label})`);
         }
       }
       const liveTtys = new Set(live.map((p) => p.ttyPath));
@@ -2299,9 +2432,12 @@ async function watchLoop(intervalMs: number): Promise<void> {
             console.log("watch: display set changed — waiting for geometry to settle");
             const settled = await settleDisplays(sig);
             const known = (state.knownDisplaySets ?? []).includes(settled);
-            if (settled === screensSig) {
+            const decision = reflowDecision({ settled, previous: screensSig, known, mode });
+            if (decision === "unchanged") {
               console.log("watch: displays settled back to the previous shape — nothing to do");
-            } else if (mode === "new" && known) {
+            } else if (decision === "shrunk") {
+              console.log("watch: displays removed — leaving panes where macOS put them (seance arrange to re-tile)");
+            } else if (decision === "known") {
               // macOS restores window positions per display arrangement when a
               // configuration it has seen comes back, and that restoration is
               // the layout the user actually had. Re-deriving one on top of it
@@ -2333,6 +2469,13 @@ async function watchLoop(intervalMs: number): Promise<void> {
 }
 
 async function installWatcher(): Promise<void> {
+  // A watcher installed from a throwaway checkout keeps running that copy's
+  // build until the checkout is deleted, then crash-loops: observed with the
+  // launch agent pointing into a vanished agent worktree under $TMPDIR.
+  const temp = await fs.realpath(tmpdir());
+  if ((await fs.realpath(packageRoot())).startsWith(temp)) {
+    throw new Error(`refusing to install the watcher from a temporary checkout (${packageRoot()})`);
+  }
   const cliJs = join(packageRoot(), "dist", "cli.js");
   await fs.access(cliJs).catch(() => {
     throw new Error(`${cliJs} missing — run "npm run build" first`);

@@ -1,8 +1,10 @@
 import { execa } from "execa";
 import { promises as fs } from "node:fs";
-import { basename } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { selectPaneProcesses, worktreeMainRoot, type PaneProcess } from "./policy.js";
 import type { Rect, WindowRef } from "./types.js";
-import { cocoaFramesToAx, type CocoaRect } from "./layouts.js";
+import { cocoaFramesToAx, sizeTook, type CocoaRect } from "./layouts.js";
 import type { ThemePalette } from "./themes.js";
 import type { Appearance } from "./themes.js";
 
@@ -171,8 +173,8 @@ const ORIGIN_TOLERANCE = 40;
 
 export async function setWindowBounds(
   plans: Array<{ ttyPath: string; rect: Rect; label?: string }>,
-): Promise<{ placed: string[]; stranded: string[]; drift: WindowDrift[] }> {
-  if (plans.length === 0) return { placed: [], stranded: [], drift: [] };
+): Promise<{ placed: string[]; stranded: string[]; drift: WindowDrift[]; undersized: WindowDrift[] }> {
+  if (plans.length === 0) return { placed: [], stranded: [], drift: [], undersized: [] };
 
   const stamp = Date.now().toString(36);
   const stamped = plans.map((p, i) => ({
@@ -192,6 +194,7 @@ export async function setWindowBounds(
   const MAX_ROUNDS = 5;
   const placed: string[] = [];
   const drift: WindowDrift[] = [];
+  const undersized = new Map<string, Rect>();
   let remaining = stamped;
 
   for (let round = 0; round < MAX_ROUNDS && remaining.length > 0; round++) {
@@ -266,6 +269,14 @@ export async function setWindowBounds(
       const got = landed.get(s.i);
       if (!got) continue;
       if (Math.abs(got.x - s.rect.x) <= ORIGIN_TOLERANCE && Math.abs(got.y - s.rect.y) <= ORIGIN_TOLERANCE) {
+        // A window moved onto another display can take the origin but keep
+        // its old size. The next round re-applies both, and by then it is
+        // already on the right display, so the size takes.
+        if (!sizeTook(s.rect, got)) {
+          undersized.set(s.ttyPath, got);
+          continue;
+        }
+        undersized.delete(s.ttyPath);
         placed.push(s.ttyPath);
         if (got.width > s.rect.width + 1 || got.height > s.rect.height + 1) {
           drift.push({ ttyPath: s.ttyPath, ...(s.label ? { label: s.label } : {}), want: s.rect, got });
@@ -318,13 +329,22 @@ export async function setWindowBounds(
     }),
   );
 
-  return { placed, stranded: remaining.map((s) => s.ttyPath), drift };
+  return {
+    placed,
+    stranded: remaining.filter((s) => !undersized.has(s.ttyPath)).map((s) => s.ttyPath),
+    drift,
+    undersized: remaining
+      .filter((s) => undersized.has(s.ttyPath))
+      .map((s) => ({ ttyPath: s.ttyPath, ...(s.label ? { label: s.label } : {}), want: s.rect, got: undersized.get(s.ttyPath)! })),
+  };
 }
 
 export interface PerceivedPane {
   ttyPath: string;
   command: string;
   cwd?: string;
+  /** The repo the pane is in, which may be an ancestor of `cwd`. */
+  root?: string;
 }
 
 /**
@@ -338,35 +358,48 @@ export async function perceivePanes(): Promise<PerceivedPane[]> {
   if (pid === undefined) return [];
 
   const { stdout: psOut } = await execa("ps", ["-axo", "pid,ppid,tty,command"]);
-  type Proc = { pid: number; ppid: number; tty: string; command: string };
-  const procs: Proc[] = [];
+  const procs: PaneProcess[] = [];
   for (const line of psOut.split("\n").slice(1)) {
     const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/.exec(line);
     if (!m) continue;
     procs.push({ pid: Number(m[1]), ppid: Number(m[2]), tty: m[3]!, command: m[4]! });
   }
 
-  const childTtys = new Set<string>();
-  for (const p of procs) if (p.ppid === pid && /^ttys\d+/.test(p.tty)) childTtys.add(p.tty);
+  const panes = selectPaneProcesses(procs, pid);
+  const cwds = await cwdsForPids(panes.map((p) => p.shellPid));
+  return Promise.all(
+    panes.map(async (p) => {
+      const cwd = cwds.get(p.shellPid);
+      const root = cwd ? await repoRoot(cwd) : undefined;
+      return {
+        ttyPath: `/dev/${p.tty}`,
+        command: p.command,
+        ...(cwd ? { cwd } : {}),
+        ...(root ? { root } : {}),
+      };
+    }),
+  );
+}
 
-  const deepest = new Map<string, Proc>();
-  for (const p of procs) {
-    if (!childTtys.has(p.tty)) continue;
-    const cur = deepest.get(p.tty);
-    if (!cur || p.pid > cur.pid) deepest.set(p.tty, p);
+const repoRootCache = new Map<string, string>();
+
+/**
+ * The directory that names a pane's repo: the enclosing git work tree, with a
+ * linked worktree folded into the repo that owns it. A cwd outside any repo
+ * names itself. Cached: the watcher asks for every pane on every pass.
+ */
+async function repoRoot(cwd: string): Promise<string> {
+  const cached = repoRootCache.get(cwd);
+  if (cached !== undefined) return cached;
+  let root = cwd;
+  for (let dir = cwd; dir !== "/" && dir !== homedir(); dir = dirname(dir)) {
+    const git = await fs.stat(join(dir, ".git")).catch(() => undefined);
+    if (!git) continue;
+    root = git.isFile() ? (worktreeMainRoot(await fs.readFile(join(dir, ".git"), "utf8")) ?? dir) : dir;
+    break;
   }
-
-  const cwds = await cwdsForPids([...deepest.values()].map((p) => p.pid));
-
-  return [...childTtys].sort().map((tty) => {
-    const proc = deepest.get(tty)!;
-    const cwd = cwds.get(proc.pid);
-    return {
-      ttyPath: `/dev/${tty}`,
-      command: proc.command,
-      ...(cwd ? { cwd } : {}),
-    };
-  });
+  repoRootCache.set(cwd, root);
+  return root;
 }
 
 /**

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  tintBackground,
+  pickTint,
+  backgroundDistance,
+  shadeBackground,
   DEFAULT_MIN_CONTRAST,
   contrastRatio,
   contrastRepairs,
@@ -155,5 +159,49 @@ describe("contrastRepairs", () => {
 
   it("is empty for a palette that already passes", () => {
     expect(contrastRepairs(palette())).toEqual([]);
+  });
+});
+
+describe("shadeBackground", () => {
+  it("returns the background untouched for shade 0", () => {
+    expect(shadeBackground("#1e1e2e", 0)).toBe("#1e1e2e");
+  });
+
+  it("moves each further shade visibly away from the background, toward mid-grey", () => {
+    for (const bg of ["#1e1e2e", "#fafafa"]) {
+      const one = shadeBackground(bg, 1);
+      const two = shadeBackground(bg, 2);
+      expect(new Set([bg, one, two]).size).toBe(3);
+      const dark = relativeLuminance(bg) < 0.18;
+      expect(relativeLuminance(one) > relativeLuminance(bg)).toBe(dark);
+      expect(contrastRatio(bg, one)).toBeGreaterThan(1.1);
+    }
+  });
+});
+
+describe("tintBackground / pickTint", () => {
+  const base = "#1e1e2e";
+
+  it("leaves the background alone for no tint", () => {
+    expect(tintBackground(base, null)).toBe(base);
+  });
+
+  it("keeps the theme's own background when nothing open is close to it", () => {
+    expect(pickTint(base, [])).toBeNull();
+    expect(pickTint(base, ["#fafafa"])).toBeNull();
+  });
+
+  it("tints away from open repos whose backgrounds look the same", () => {
+    // metis, dictator and the-birthday wore three different themes that all
+    // painted near-identical dark grey, so the screen could not tell them apart.
+    const hue = pickTint(base, [base]);
+    expect(hue).not.toBeNull();
+    expect(backgroundDistance(tintBackground(base, hue), base)).toBeGreaterThan(0.03);
+  });
+
+  it("picks the hue farthest from a tinted neighbour", () => {
+    const hue = pickTint(base, [base, tintBackground(base, 0)])!;
+    const gap = Math.min(Math.abs(hue - 0), 360 - Math.abs(hue - 0));
+    expect(gap).toBeGreaterThanOrEqual(90);
   });
 });

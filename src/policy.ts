@@ -31,6 +31,12 @@ export interface IdentityEntry {
    * written before this existed, which are treated as the oldest.
    */
   assignedAt?: string;
+  /**
+   * Background hue added so this repo stands apart from the repos open beside
+   * it when it was first seen; `null` keeps the theme's own background. Chosen
+   * once, like `pair`. A `bg` override takes precedence.
+   */
+  tint?: number | null;
 }
 
 export function repoOf(cwd: string, home: string): string {
@@ -108,20 +114,72 @@ export function autoGrid(n: number, screenWidth: number, minPaneWidth: number): 
 }
 
 /**
- * Who keeps a pair when several live repos wear it. Pinned always wins;
- * otherwise the incumbent does. Ordering by name alone let a transient repo
- * evict an established one purely by sorting earlier — observed as `seance`
- * losing its colour to a wandering `mnemosyne` pane on consecutive passes.
+ * Which of several live repos wearing one pair keeps it unshaded. Pinned
+ * first, then the incumbent, then name: a transient repo must never take the
+ * plain colour from an established one just by sorting earlier.
  */
-function pickKeeper(colliders: string[], identity: Record<string, IdentityEntry>): string {
-  const pinned = colliders.find((repo) => identity[repo]?.pinned);
-  if (pinned) return pinned;
+function keeperOrder(identity: Record<string, IdentityEntry>) {
   const age = (repo: string): string => identity[repo]?.assignedAt ?? "";
-  let best = colliders[0]!;
-  for (const repo of colliders) {
-    if (age(repo) < age(best) || (age(repo) === age(best) && repo < best)) best = repo;
+  return (a: string, b: string): number => {
+    const pinned = Number(!!identity[b]?.pinned) - Number(!!identity[a]?.pinned);
+    if (pinned !== 0) return pinned;
+    return compareStrings(age(a), age(b)) || compareStrings(a, b);
+  };
+}
+
+/**
+ * Shade per live repo, separating live repos that share a pair without
+ * touching anyone's stored identity. Shade 0 is the pair as registered.
+ */
+export function liveShades(liveRepos: string[], identity: Record<string, IdentityEntry>): Map<string, number> {
+  const byPair = new Map<string, string[]>();
+  for (const repo of new Set(liveRepos)) {
+    const entry = identity[repo];
+    if (!entry) continue;
+    byPair.set(entry.pair, [...(byPair.get(entry.pair) ?? []), repo]);
   }
-  return best;
+  const shades = new Map<string, number>();
+  for (const wearers of byPair.values()) {
+    wearers.sort(keeperOrder(identity)).forEach((repo, i) => shades.set(repo, i));
+  }
+  return shades;
+}
+
+export interface PaneProcess {
+  pid: number;
+  ppid: number;
+  tty: string;
+  command: string;
+}
+
+/**
+ * Per Ghostty pane: the shell `login` started, whose cwd is the pane's
+ * identity for its whole life, and the shell's foreground command. Never the
+ * newest process on the tty: that is usually a transient child that may be
+ * gone before its cwd can be read, and after PID wraparound it can be `login`
+ * itself, which is root-owned and has no readable cwd.
+ */
+export function selectPaneProcesses(
+  procs: PaneProcess[],
+  ghosttyPid: number,
+): Array<{ tty: string; shellPid: number; command: string }> {
+  const out: Array<{ tty: string; shellPid: number; command: string }> = [];
+  for (const login of procs) {
+    if (login.ppid !== ghosttyPid || !/^ttys\d+/.test(login.tty)) continue;
+    const shell = procs.find((p) => p.ppid === login.pid && p.tty === login.tty);
+    if (!shell) continue;
+    const foreground = procs
+      .filter((p) => p.ppid === shell.pid && p.tty === shell.tty)
+      .reduce<PaneProcess | undefined>((a, p) => (!a || p.pid > a.pid ? p : a), undefined);
+    out.push({ tty: login.tty, shellPid: shell.pid, command: (foreground ?? shell).command });
+  }
+  return out.sort((a, b) => compareStrings(a.tty, b.tty));
+}
+
+/** The repo owning a linked worktree, from the worktree's `.git` file. */
+export function worktreeMainRoot(gitFile: string): string | undefined {
+  const m = /^gitdir:\s*(.+?)\/\.git\/worktrees\/[^/]+\s*$/.exec(gitFile.trim());
+  return m?.[1];
 }
 
 /**
@@ -146,7 +204,7 @@ export function assignThemes(
   now: string = new Date().toISOString(),
 ): {
   identity: Record<string, IdentityEntry>;
-  changes: Array<{ repo: string; pair: string; reason: "new" | "collision" }>;
+  changes: Array<{ repo: string; pair: string; reason: "new" }>;
 } {
   const live = [...new Set(liveRepos)].filter((r) => !isEphemeralRepo(r)).sort();
   const result: Record<string, IdentityEntry> = { ...identity };
@@ -155,56 +213,48 @@ export function assignThemes(
   for (const repo of Object.keys(result)) {
     if (isEphemeralRepo(repo)) delete result[repo];
   }
-  const changes: Array<{ repo: string; pair: string; reason: "new" | "collision" }> = [];
+  const changes: Array<{ repo: string; pair: string; reason: "new" }> = [];
 
-  const wearers = new Map<string, string[]>();
-  for (const repo of live) {
-    const entry = identity[repo];
-    if (!entry) continue;
-    const worn = wearers.get(entry.pair);
-    if (worn) worn.push(repo);
-    else wearers.set(entry.pair, [repo]);
+  // Write-once: a repo keeps the pair it was first given, whoever else is
+  // open. Rewriting a collision loser made colour depend on the company a
+  // repo kept, which is the one thing a per-repo colour must not do.
+  const wornByLive = new Set<string>();
+  const wearers = new Map<string, number>();
+  for (const [repo, entry] of Object.entries(result)) {
+    wearers.set(entry.pair, (wearers.get(entry.pair) ?? 0) + 1);
+    if (live.includes(repo)) wornByLive.add(entry.pair);
   }
 
-  const losers = new Set<string>();
-  for (const colliders of wearers.values()) {
-    if (colliders.length < 2) continue;
-    const keeper = pickKeeper(colliders, identity);
-    for (const repo of colliders) if (repo !== keeper) losers.add(repo);
-  }
-
-  const pairsInIdentity = new Set<string>(Object.values(result).map((e) => e.pair));
-  const pairsWornByLive = new Set<string>();
   for (const repo of live) {
-    const entry = identity[repo];
-    if (entry && !losers.has(repo)) pairsWornByLive.add(entry.pair);
-  }
-
-  let assignIndex = 0;
-  for (const repo of live) {
-    const existing = identity[repo];
-    if (existing && !losers.has(repo)) continue;
-    const free =
-      ring.find((p) => !pairsInIdentity.has(p)) ?? ring.find((p) => !pairsWornByLive.has(p));
-    // With nothing free, the old code handed back a pair someone else was
-    // already wearing. That leaves this repo a collision loser on the next
-    // pass, and the pass after, forever — one real watcher log accumulated
-    // 31,025 identical reassignments of a single repo this way, each one a
-    // state write. A duplicate colour is stable; an endlessly reassigned one
-    // is not, so an established repo keeps what it has.
-    if (free === undefined && existing) continue;
-    const pick = free ?? ring[assignIndex % ring.length]!;
-    const bg = existing?.bg;
-    result[repo] = {
-      pair: pick,
-      ...(bg !== undefined ? { bg } : {}),
-      assignedAt: now,
-    };
-    pairsInIdentity.add(pick);
-    pairsWornByLive.add(pick);
-    changes.push({ repo, pair: pick, reason: existing ? "collision" : "new" });
-    assignIndex++;
+    if (result[repo]) continue;
+    const candidates = ring.some((p) => !wornByLive.has(p)) ? ring.filter((p) => !wornByLive.has(p)) : ring;
+    const pick = candidates.reduce((best, p) => ((wearers.get(p) ?? 0) < (wearers.get(best) ?? 0) ? p : best));
+    result[repo] = { pair: pick, assignedAt: now };
+    wornByLive.add(pick);
+    wearers.set(pick, (wearers.get(pick) ?? 0) + 1);
+    changes.push({ repo, pair: pick, reason: "new" });
   }
 
   return { identity: result, changes };
+}
+
+export type ReflowDecision = "unchanged" | "shrunk" | "known" | "reflow";
+
+/**
+ * What the watcher does once the display set has settled. Losing displays is
+ * never a reason to re-tile: it is almost always transient (a replug, sleep,
+ * a dock renegotiating), and a reflow onto the survivors outlives it, because
+ * the full set then returns as a known arrangement and is left alone.
+ * Signatures are `|`-joined, one entry per display.
+ */
+export function reflowDecision(input: {
+  settled: string;
+  previous: string;
+  known: boolean;
+  mode: "new" | "always";
+}): ReflowDecision {
+  if (input.settled === input.previous) return "unchanged";
+  if (input.settled.split("|").length < input.previous.split("|").length) return "shrunk";
+  if (input.mode === "new" && input.known) return "known";
+  return "reflow";
 }

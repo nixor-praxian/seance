@@ -121,6 +121,71 @@ export function contrastRepairs(
   return repairs;
 }
 
+/**
+ * A background variant that tells apart live panes sharing one theme. Each
+ * shade steps OKLab lightness toward mid-grey and adds a little chroma on a
+ * golden-angle hue, so neighbouring shades differ in both lightness and tint.
+ * The palette is contrast-guarded against the result, as with any override.
+ */
+export function shadeBackground(background: string, shade: number): string {
+  if (shade <= 0) return background;
+  const [lightness, a, b] = toOklab(background);
+  const step = 0.05 * shade * (lightness < 0.6 ? 1 : -1);
+  const hue = (shade * 137.5 * Math.PI) / 180;
+  return fromOklab(lightness + step, a + 0.03 * Math.cos(hue), b + 0.03 * Math.sin(hue));
+}
+
+/**
+ * How different two backgrounds look at a glance, in OKLab with hue weighted
+ * over lightness. Plain OKLab called black and a very dark grey distinct, and
+ * a light and a dark green distinct, when on screen each pair reads as one
+ * colour: across a screen of dark terminals it is hue that tells panes apart.
+ */
+export function backgroundDistance(a: string, b: string): number {
+  const [l1, a1, b1] = toOklab(a);
+  const [l2, a2, b2] = toOklab(b);
+  return Math.hypot(0.5 * (l1 - l2), 2 * (a1 - a2), 2 * (b1 - b2));
+}
+
+const TINT_CHROMA = 0.04;
+const TINT_HUES = Array.from({ length: 12 }, (_, i) => i * 30);
+/** Two backgrounds closer than this read as the same colour at a glance. */
+const DISTINCT = 0.08;
+
+/**
+ * A theme's background, recoloured to `hue` at a fixed chroma with its
+ * lightness kept, so the palette's text still sits on the same lightness.
+ * `null` is the theme's own background.
+ */
+export function tintBackground(background: string, hue: number | null): string {
+  if (hue === null) return background;
+  const [lightness] = toOklab(background);
+  const rad = (hue * Math.PI) / 180;
+  return fromOklab(lightness, TINT_CHROMA * Math.cos(rad), TINT_CHROMA * Math.sin(rad));
+}
+
+/**
+ * The tint that sets a background farthest from the ones already open. Many
+ * distinct themes paint nearly the same dark grey, so a theme alone does not
+ * make panes tell apart. The theme's own background is kept when it is
+ * already distinct, and wins ties, so a tint is only added where it helps.
+ */
+export function pickTint(background: string, others: string[]): number | null {
+  const nearest = (bg: string): number =>
+    others.length === 0 ? Infinity : Math.min(...others.map((o) => backgroundDistance(bg, o)));
+  if (nearest(background) >= DISTINCT) return null;
+  let best: number | null = null;
+  let bestGap = nearest(background);
+  for (const hue of TINT_HUES) {
+    const gap = nearest(tintBackground(background, hue));
+    if (gap > bestGap + 1e-9) {
+      best = hue;
+      bestGap = gap;
+    }
+  }
+  return best;
+}
+
 function channels(hex: string): [number, number, number] {
   return [
     parseInt(hex.slice(1, 3), 16) / 255,

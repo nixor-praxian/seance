@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  sizeTook,
   growGridToFit,
   parseGrid,
   parseCustomColumns,
@@ -141,5 +142,22 @@ describe("cocoaFramesToAx", () => {
     const out = cocoaFramesToAx(visibleFrames, primaryFrameHeight);
     expect(out).toHaveLength(3);
     expect(out.map((r) => r.x)).toEqual([0, 829, -1091]);
+  });
+});
+
+describe("sizeTook", () => {
+  const want = { x: 0, y: 0, width: 640, height: 1050 };
+
+  it("accepts Ghostty's cell snapping in either direction", () => {
+    // Measured: 548x540 came back 548x602, and 432x1079 came back 443x1021.
+    expect(sizeTook(want, { ...want, height: 1102 })).toBe(true);
+    expect(sizeTook(want, { ...want, width: 611, height: 992 })).toBe(true);
+  });
+
+  it("rejects a window left at a fraction of its cell", () => {
+    // A pane moved onto another display got its position but not its size:
+    // six of sixteen panes sat at about a quarter height, reported as placed.
+    expect(sizeTook(want, { ...want, height: 270 })).toBe(false);
+    expect(sizeTook(want, { ...want, width: 300 })).toBe(false);
   });
 });

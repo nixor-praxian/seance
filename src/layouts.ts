@@ -180,3 +180,15 @@ export function cocoaFramesToAx(visibleFrames: CocoaRect[], primaryFrameHeight: 
 function roundPx(n: number): number {
   return Math.round(n);
 }
+
+/**
+ * Whether a window took the size it was asked for. Ghostty snaps to whole
+ * character cells, so a cell legitimately comes back up to a cell larger or
+ * smaller (measured: 1079px tall returned as 1021). Anything far below the
+ * request did not take: a window moved onto another display can land at the
+ * right origin while keeping the size it had.
+ */
+export function sizeTook(want: Rect, got: Rect): boolean {
+  const slack = (n: number): number => Math.max(80, n * 0.15);
+  return got.width >= want.width - slack(want.width) && got.height >= want.height - slack(want.height);
+}

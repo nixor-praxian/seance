@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   repoOf,
+  reflowDecision,
+  liveShades,
+  selectPaneProcesses,
+  worktreeMainRoot,
   computeRoles,
   resolveRole,
   placePanes,
@@ -227,36 +231,19 @@ describe("assignThemes", () => {
     expect(identity["offline"]).toEqual({ pair: "gruvbox" });
   });
 
-  it("pinned wins a collision over an alphabetically-earlier unpinned repo", () => {
+  it("never recolours an established repo when it collides with another live one", () => {
+    // Rewriting the loser's pair on every collision made a repo's colour depend
+    // on which other repos happened to be open. Identity is write-once; live duplicates are
+    // separated by liveShades at paint time instead.
     const input: Record<string, IdentityEntry> = {
       a: { pair: "catppuccin", bg: "#111111" },
       b: { pair: "catppuccin", pinned: true },
+      established: { pair: "rose-pine", assignedAt: "2026-01-01T00:00:00.000Z" },
+      aardvark: { pair: "rose-pine", assignedAt: "2026-06-01T00:00:00.000Z" },
     };
-    const { identity, changes } = assignThemes(["a", "b"], input, ring, NOW);
-    expect(identity["b"]).toEqual({ pair: "catppuccin", pinned: true });
-    expect(identity["a"]).toEqual({ pair: "rose-pine", bg: "#111111", assignedAt: NOW });
-    expect(changes).toEqual([{ repo: "a", pair: "rose-pine", reason: "collision" }]);
-  });
-
-  it("alphabetically-first keeps when both colliders are unpinned", () => {
-    const input: Record<string, IdentityEntry> = {
-      a: { pair: "catppuccin" },
-      b: { pair: "catppuccin" },
-    };
-    const { identity, changes } = assignThemes(["b", "a"], input, ring);
-    expect(identity["a"]).toEqual({ pair: "catppuccin" });
-    expect(changes).toEqual([{ repo: "b", pair: "rose-pine", reason: "collision" }]);
-  });
-
-  it("alphabetically-first keeps when both are pinned; the loser loses pinned", () => {
-    const input: Record<string, IdentityEntry> = {
-      a: { pair: "catppuccin", pinned: true },
-      b: { pair: "catppuccin", pinned: true },
-    };
-    const { identity, changes } = assignThemes(["a", "b"], input, ring, NOW);
-    expect(identity["a"]).toEqual({ pair: "catppuccin", pinned: true });
-    expect(identity["b"]).toEqual({ pair: "rose-pine", assignedAt: NOW });
-    expect(changes).toEqual([{ repo: "b", pair: "rose-pine", reason: "collision" }]);
+    const { identity, changes } = assignThemes(["a", "b", "aardvark", "established"], input, ring, NOW);
+    expect(changes).toEqual([]);
+    expect(identity).toEqual(input);
   });
 
   it("prefers pairs unused by anyone over pairs worn by non-live repos", () => {
@@ -311,14 +298,17 @@ describe("assignThemes", () => {
     expect(Object.keys(identity).sort()).toEqual(["temp_git_x", "temp_gitignore"]);
   });
 
-  it("the incumbent keeps the pair when a newer repo collides", () => {
+  it("gives a new repo a pair no live repo wears, preferring the least-worn", () => {
     const input: Record<string, IdentityEntry> = {
-      established: { pair: "catppuccin", assignedAt: "2026-01-01T00:00:00.000Z" },
-      aardvark: { pair: "catppuccin", assignedAt: "2026-06-01T00:00:00.000Z" },
+      live1: { pair: "catppuccin" },
+      off1: { pair: "rose-pine" },
+      off2: { pair: "rose-pine" },
+      off3: { pair: "gruvbox" },
+      off4: { pair: "ayu" },
+      off5: { pair: "ayu" },
     };
-    const { identity, changes } = assignThemes(["aardvark", "established"], input, ring, NOW);
-    expect(identity["established"]).toEqual(input["established"]);
-    expect(changes).toEqual([{ repo: "aardvark", pair: "rose-pine", reason: "collision" }]);
+    const { identity } = assignThemes(["live1", "new"], input, ring, NOW);
+    expect(identity["new"]).toEqual({ pair: "gruvbox", assignedAt: NOW });
   });
 
   it("passes non-live entries through untouched", () => {
@@ -353,6 +343,103 @@ describe("assignThemes", () => {
       offline: { pair: "rose-pine" },
     };
     const live = ["c", "a", "b", "d"];
-    expect(assignThemes(live, input, ring)).toEqual(assignThemes(live, input, ring));
+    expect(assignThemes(live, input, ring, NOW)).toEqual(assignThemes(live, input, ring, NOW));
+  });
+});
+
+describe("liveShades", () => {
+  it("gives every live repo shade 0 while their pairs are distinct", () => {
+    const identity: Record<string, IdentityEntry> = { a: { pair: "p1" }, b: { pair: "p2" } };
+    expect(liveShades(["a", "b"], identity)).toEqual(new Map([["a", 0], ["b", 0]]));
+  });
+
+  it("separates live repos sharing a pair: pinned, then incumbent, then name keeps shade 0", () => {
+    const identity: Record<string, IdentityEntry> = {
+      young: { pair: "p1", assignedAt: "2026-06-01T00:00:00.000Z" },
+      old: { pair: "p1", assignedAt: "2026-01-01T00:00:00.000Z" },
+      pinned: { pair: "p1", pinned: true, assignedAt: "2026-09-01T00:00:00.000Z" },
+      offline: { pair: "p1" },
+    };
+    expect(liveShades(["young", "old", "pinned"], identity)).toEqual(
+      new Map([["pinned", 0], ["old", 1], ["young", 2]]),
+    );
+  });
+});
+
+describe("selectPaneProcesses", () => {
+  const GHOSTTY = 100;
+  const proc = (pid: number, ppid: number, tty: string, command: string) => ({ pid, ppid, tty, command });
+
+  it("takes identity from the pane's shell, not its newest process", () => {
+    // The newest process on a busy Claude pane is a transient child (a Bash
+    // tool call, caffeinate, an MCP server). When it exited between ps and
+    // lsof the pane had no cwd and read as "home", and was repainted each time.
+    const panes = selectPaneProcesses(
+      [
+        proc(200, GHOSTTY, "ttys001", "/usr/bin/login -flp dev"),
+        proc(201, 200, "ttys001", "-/bin/zsh"),
+        proc(300, 201, "ttys001", "claude --resume abc"),
+        proc(900, 300, "ttys001", "caffeinate -i -t 300"),
+      ],
+      GHOSTTY,
+    );
+    expect(panes).toEqual([{ tty: "ttys001", shellPid: 201, command: "claude --resume abc" }]);
+  });
+
+  it("reports the shell itself when nothing runs in the foreground", () => {
+    const panes = selectPaneProcesses(
+      [proc(200, GHOSTTY, "ttys002", "/usr/bin/login"), proc(201, 200, "ttys002", "-/bin/zsh")],
+      GHOSTTY,
+    );
+    expect(panes).toEqual([{ tty: "ttys002", shellPid: 201, command: "-/bin/zsh" }]);
+  });
+
+  it("survives PID wraparound: the login process may carry the highest pid", () => {
+    const panes = selectPaneProcesses(
+      [proc(99990, GHOSTTY, "ttys003", "/usr/bin/login"), proc(12, 99990, "ttys003", "-/bin/zsh")],
+      GHOSTTY,
+    );
+    expect(panes).toEqual([{ tty: "ttys003", shellPid: 12, command: "-/bin/zsh" }]);
+  });
+
+  it("ignores processes that belong to another app's terminals", () => {
+    expect(selectPaneProcesses([proc(5, 4, "ttys009", "-/bin/zsh")], GHOSTTY)).toEqual([]);
+  });
+});
+
+describe("worktreeMainRoot", () => {
+  it("maps a linked worktree to the repo that owns it", () => {
+    expect(worktreeMainRoot("gitdir: /Users/dev/GitHub/seance/.git/worktrees/wt3\n")).toBe(
+      "/Users/dev/GitHub/seance",
+    );
+  });
+
+  it("leaves submodules and anything else alone", () => {
+    expect(worktreeMainRoot("gitdir: ../.git/modules/vendor")).toBeUndefined();
+    expect(worktreeMainRoot("garbage")).toBeUndefined();
+  });
+});
+
+describe("reflowDecision", () => {
+  const five = "a:0|b:1|c:2|d:3|e:4";
+  const two = "a:0|b:1";
+
+  it("never reflows onto fewer displays than before", () => {
+    // A dock replug brings screens back in stages (1, 3, 2, 3, 5). The
+    // laptop-plus-one stage held long enough to settle, was unknown, and the
+    // watcher packed 16 panes onto two screens; the full set then came back
+    // as known and was left alone, so the packing stuck.
+    expect(reflowDecision({ settled: two, previous: five, known: false, mode: "new" })).toBe("shrunk");
+    expect(reflowDecision({ settled: two, previous: five, known: false, mode: "always" })).toBe("shrunk");
+  });
+
+  it("leaves a known arrangement to macOS in new mode, and reflows an unknown larger one", () => {
+    expect(reflowDecision({ settled: five, previous: two, known: true, mode: "new" })).toBe("known");
+    expect(reflowDecision({ settled: five, previous: two, known: false, mode: "new" })).toBe("reflow");
+    expect(reflowDecision({ settled: five, previous: two, known: true, mode: "always" })).toBe("reflow");
+  });
+
+  it("does nothing when the displays settle back to the previous shape", () => {
+    expect(reflowDecision({ settled: five, previous: five, known: false, mode: "always" })).toBe("unchanged");
   });
 });

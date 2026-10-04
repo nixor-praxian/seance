@@ -17,6 +17,12 @@ export type Role = "main" | "external.left" | "external.right";
 export interface PlacementRule {
   repo: string;
   role: Role;
+  /**
+   * Display UUID, for a pin to a display no role reaches (a fourth or fifth
+   * screen). Wins over `role` while that display is connected; `role` is the
+   * fallback when it is not.
+   */
+  display?: string;
   /** Explicit grid pin (`seance place`). Absent = auto-grid from minPaneWidth. */
   grid?: GridSpec;
 }
@@ -46,16 +52,52 @@ export function repoOf(cwd: string, home: string): string {
   return stripped.slice(stripped.lastIndexOf("/") + 1);
 }
 
+/**
+ * Externals are left or right of the main display, nearest first. Sorting by x
+ * alone breaks on a stacked desk: a 2x2 above the laptop puts two screens at
+ * the same x, so both "left" and "right" landed in the left column and the
+ * whole right column was never used.
+ */
 export function computeRoles(screens: PolicyScreen[]): Map<Role, PolicyScreen> {
   const roles = new Map<Role, PolicyScreen>();
   const main = screens.find((s) => s.isMain) ?? screens[0];
   if (!main) return roles;
   roles.set("main", main);
-  const externals = screens.filter((s) => s !== main).sort((a, b) => a.rect.x - b.rect.x);
-  const [left, right] = externals;
+  const mainCx = centerX(main);
+  const near = (a: PolicyScreen, b: PolicyScreen): number => distance(a, main) - distance(b, main);
+  const externals = screens.filter((s) => s !== main);
+  const leftSide = externals.filter((s) => centerX(s) < mainCx).sort(near);
+  const rightSide = externals.filter((s) => centerX(s) >= mainCx).sort(near);
+  let left = leftSide[0];
+  let right = rightSide[0];
+  if (!left || !right) {
+    // All externals on one side: keep the old left-to-right reading.
+    const byX = [...externals].sort((a, b) => a.rect.x - b.rect.x || near(a, b));
+    [left, right] = byX;
+  }
   if (left) roles.set("external.left", left);
   if (right) roles.set("external.right", right);
   return roles;
+}
+
+function centerX(s: PolicyScreen): number {
+  return s.rect.x + s.rect.width / 2;
+}
+
+function distance(a: PolicyScreen, b: PolicyScreen): number {
+  const dx = centerX(a) - centerX(b);
+  const dy = a.rect.y + a.rect.height / 2 - (b.rect.y + b.rect.height / 2);
+  return Math.hypot(dx, dy);
+}
+
+/** The display a rule targets: its pinned UUID when connected, else its role. */
+export function ruleScreen(
+  rule: PlacementRule,
+  roles: Map<Role, PolicyScreen>,
+  screens: PolicyScreen[] = [],
+): PolicyScreen {
+  const pinned = rule.display === undefined ? undefined : screens.find((s) => s.key === rule.display);
+  return pinned ?? resolveRole(rule.role, roles);
 }
 
 export function resolveRole(role: Role, roles: Map<Role, PolicyScreen>): PolicyScreen {
@@ -79,16 +121,17 @@ export function placePanes(
   rules: PlacementRule[],
   roles: Map<Role, PolicyScreen>,
   home: string,
+  screens: PolicyScreen[] = [],
 ): Map<string, LivePane[]> {
   const placed = panes.map((pane) => {
     const repo = repoOf(pane.cwd, home);
     const matchIndex = rules.findIndex((r) => r.repo === repo || r.repo === "*");
-    const role: Role = matchIndex === -1 ? "main" : rules[matchIndex]!.role;
+    const rule: PlacementRule = rules[matchIndex] ?? { repo, role: "main" };
     return {
       pane,
       repo,
       ruleIndex: matchIndex === -1 ? rules.length : matchIndex,
-      screenKey: resolveRole(role, roles).key,
+      screenKey: ruleScreen(rule, roles, screens).key,
     };
   });
   placed.sort(

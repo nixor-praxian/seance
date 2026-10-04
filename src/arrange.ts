@@ -1,6 +1,6 @@
 import type { Rect, GridSpec } from "./types.js";
 import type { PlacementRule, PolicyScreen, Role } from "./policy.js";
-import { resolveRole } from "./policy.js";
+import { ruleScreen } from "./policy.js";
 
 export interface PaneBudget {
   minPaneWidth: number;
@@ -29,9 +29,10 @@ export interface FamilyCount {
   count: number;
 }
 
+/** `role` is the display's role, or `display <n>` for one beyond the three roles. */
 export type PlacementNote =
-  | { kind: "empty-role"; role: Role; pinnedElsewhere: string[] }
-  | { kind: "over-capacity"; role: Role; panes: number; capacity: number };
+  | { kind: "empty-role"; role: string; pinnedElsewhere: string[] }
+  | { kind: "over-capacity"; role: string; panes: number; capacity: number };
 
 /**
  * A pane should be as portrait as the display is landscape: 9/16 is the
@@ -233,105 +234,125 @@ export function screenKeyForRect(rect: Rect, screens: PolicyScreen[]): string {
 
 /**
  * Assign families to displays. Explicit per-repo rules are honoured absolutely;
- * everything else balances by fill ratio, largest family first.
+ * everything else balances by fill ratio, largest family first, over every
+ * connected display (`screens`; the three roles alone when omitted).
+ *
+ * A display that holds a pinned repo is reserved for pinned repos: pinning
+ * mercury to a screen means "mercury's screen", and balancing the rest onto it
+ * because it looked emptiest is exactly what the pin was for. Only when every
+ * display holds a pin does balancing fall back to all of them.
  *
  * A `"*"` rule is deliberately ignored here. `ensurePolicy` seeds one for every
  * user, so honouring it would make balancing structurally impossible — that
  * catch-all is what `organize` obeys, and declining to obey it is the whole
  * difference between the two verbs.
+ *
+ * `autoPlacement` remembers a role where the display has one, since a role is
+ * re-derived from live geometry, and the display key (UUID) otherwise.
  */
 export function assignFamilies(
   families: FamilyCount[],
   rules: PlacementRule[],
-  autoPlacement: Record<string, Role>,
+  autoPlacement: Record<string, string>,
   roles: Map<Role, PolicyScreen>,
   budget: PaneBudget,
+  screens: PolicyScreen[] = [],
 ): {
-  byScreen: Map<string, { role: Role; repos: string[] }>;
-  autoPlacement: Record<string, Role>;
+  byScreen: Map<string, { role: string; repos: string[] }>;
+  autoPlacement: Record<string, string>;
   notes: PlacementNote[];
 } {
   interface Target {
-    role: Role;
+    label: string;
+    memo: string;
     screen: PolicyScreen;
     capacity: number;
     load: number;
     repos: string[];
+    reserved: boolean;
   }
 
   const targets: Target[] = [];
-  const seen = new Set<string>();
-  for (const role of ROLE_ORDER) {
-    const screen = roles.get(role);
-    if (!screen || seen.has(screen.key)) continue;
-    seen.add(screen.key);
+  const add = (screen: PolicyScreen, label: string, memo: string): void => {
+    if (targets.some((t) => t.screen.key === screen.key)) return;
     targets.push({
-      role,
+      label,
+      memo,
       screen,
       capacity: displayCapacity(screen.rect, budget),
       load: 0,
       repos: [],
+      reserved: false,
     });
+  };
+  for (const role of ROLE_ORDER) {
+    const screen = roles.get(role);
+    if (screen) add(screen, role, role);
   }
+  screens.forEach((screen, i) => add(screen, `display ${i}`, screen.key));
   if (targets.length === 0) {
     return { byScreen: new Map(), autoPlacement: { ...autoPlacement }, notes: [] };
   }
 
   const order = new Map(families.map((f, i) => [f.repo, i]));
-  const pinned = new Map<string, Role>();
+  const pinned = new Map<string, PlacementRule>();
   for (const family of families) {
     const rule = rules.find((r) => r.repo === family.repo);
-    if (rule) pinned.set(family.repo, rule.role);
+    if (rule) pinned.set(family.repo, rule);
   }
 
   for (const family of families) {
-    const role = pinned.get(family.repo);
-    if (role === undefined) continue;
-    const screen = resolveRole(role, roles);
+    const rule = pinned.get(family.repo);
+    if (rule === undefined) continue;
+    const screen = ruleScreen(rule, roles, screens);
     const target = targets.find((t) => t.screen.key === screen.key) ?? targets[0]!;
     target.load += family.count;
     target.repos.push(family.repo);
+    target.reserved = true;
   }
 
-  const nextAuto: Record<string, Role> = { ...autoPlacement };
+  const open = targets.some((t) => !t.reserved) ? targets.filter((t) => !t.reserved) : targets;
+  const remembered = (memo: string | undefined): Target | undefined => {
+    if (memo === undefined) return undefined;
+    const screen = roles.get(memo as Role) ?? screens.find((s) => s.key === memo);
+    return screen ? open.find((t) => t.screen.key === screen.key) : undefined;
+  };
+
+  const nextAuto: Record<string, string> = { ...autoPlacement };
   const free = families
     .filter((f) => !pinned.has(f.repo))
     .sort((a, b) => b.count - a.count || compareStrings(a.repo, b.repo));
 
   for (const family of free) {
     const fill = (t: Target): number => (t.load + family.count) / t.capacity;
-    let best = targets[0]!;
-    for (const t of targets) if (fill(t) < fill(best)) best = t;
+    let best = open[0]!;
+    for (const t of open) if (fill(t) < fill(best)) best = t;
 
-    const previousRole = autoPlacement[family.repo];
-    const previousScreen = previousRole === undefined ? undefined : roles.get(previousRole);
-    const previous = previousScreen
-      ? targets.find((t) => t.screen.key === previousScreen.key)
-      : undefined;
+    const previous = remembered(autoPlacement[family.repo]);
     const chosen = previous && fill(previous) <= fill(best) + HYSTERESIS ? previous : best;
 
     chosen.load += family.count;
     chosen.repos.push(family.repo);
-    nextAuto[family.repo] = chosen.role;
+    nextAuto[family.repo] = chosen.memo;
   }
 
-  const byScreen = new Map<string, { role: Role; repos: string[] }>();
+  const byScreen = new Map<string, { role: string; repos: string[] }>();
   for (const target of targets) {
     if (target.repos.length === 0) continue;
     const repos = [...target.repos].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
-    byScreen.set(target.screen.key, { role: target.role, repos });
+    byScreen.set(target.screen.key, { role: target.label, repos });
   }
 
   const pinnedRepos = [...pinned.keys()].sort(compareStrings);
   const notes: PlacementNote[] = [];
   for (const target of targets) {
     if (target.repos.length === 0) {
-      notes.push({ kind: "empty-role", role: target.role, pinnedElsewhere: pinnedRepos });
+      notes.push({ kind: "empty-role", role: target.label, pinnedElsewhere: pinnedRepos });
     }
     if (target.load > target.capacity) {
       notes.push({
         kind: "over-capacity",
-        role: target.role,
+        role: target.label,
         panes: target.load,
         capacity: target.capacity,
       });

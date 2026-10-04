@@ -18,7 +18,7 @@ import {
   computeRoles,
   placePanes,
   repoOf,
-  resolveRole,
+  ruleScreen,
   type IdentityEntry,
   type LivePane,
   type PlacementRule,
@@ -1122,11 +1122,7 @@ export async function run(argv: string[]): Promise<void> {
       }
 
       const screens = await ghostty.listScreens();
-      const policyScreens: PolicyScreen[] = screens.map((s) => ({
-        key: String(s.displayId),
-        rect: s.rect,
-        isMain: s.isMain,
-      }));
+      const policyScreens = toPolicyScreens(screens);
       const roles = computeRoles(policyScreens);
 
       let target: PolicyScreen;
@@ -1138,7 +1134,7 @@ export async function run(argv: string[]): Promise<void> {
         target = s;
       } else {
         const existing = state.placement!.find((r) => r.repo === repoArg || r.repo === "*");
-        target = resolveRole(existing?.role ?? "main", roles);
+        target = ruleScreen(existing ?? { repo: repoArg, role: "main" }, roles, policyScreens);
       }
       const role = [...roles.entries()].find(([, s]) => s.key === target.key)?.[0] ?? "main";
 
@@ -1148,7 +1144,12 @@ export async function run(argv: string[]): Promise<void> {
       }
 
       state.placement = [
-        { repo: repoArg, role, ...(grid ? { grid } : {}) },
+        {
+          repo: repoArg,
+          role,
+          ...(opts.screen !== undefined ? { display: target.key } : {}),
+          ...(grid ? { grid } : {}),
+        },
         ...state.placement!.filter((r) => r.repo !== repoArg),
       ];
 
@@ -1159,7 +1160,7 @@ export async function run(argv: string[]): Promise<void> {
       const { placed, stranded } = await ghostty.setWindowBounds(plans);
       await saveState(state);
 
-      const screenIdx = screens.find((s) => String(s.displayId) === target.key)!.index;
+      const screenIdx = screens[policyScreens.indexOf(target)]!.index;
       console.log(
         `placed ${placed.length}/${panes.length} ${repoArg} pane(s) as ${g.cols}x${g.rows} on display ${screenIdx} (${role})${grid ? " — pinned" : " — pin cleared"}`,
       );
@@ -1875,11 +1876,7 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
   state.identity = identity;
 
   const screens = await ghostty.listScreens();
-  const policyScreens: PolicyScreen[] = screens.map((s) => ({
-    key: String(s.displayId),
-    rect: s.rect,
-    isMain: s.isMain,
-  }));
+  const policyScreens = toPolicyScreens(screens);
   const roles = computeRoles(policyScreens);
   const roleOf = new Map<string, string>();
   for (const [role, s] of roles) roleOf.set(s.key, role);
@@ -1902,7 +1899,7 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
     cwd: p.cwd,
     command: p.command,
   }));
-  const byScreen = placePanes(livePanes, state.placement!, roles, home);
+  const byScreen = placePanes(livePanes, state.placement!, roles, home, policyScreens);
   const repoByTty = new Map(live.map((p) => [p.ttyPath, p.repo]));
 
   const plans: Array<{ ttyPath: string; rect: Rect; label?: string }> = [];
@@ -1911,7 +1908,7 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
   for (const [key, panes] of byScreen) {
     const screen = policyScreens.find((s) => s.key === key)!;
     const reposOn = new Set(panes.map((p) => repoByTty.get(p.ttyPath)!));
-    const role = roleOf.get(key) ?? key;
+    const role = roleOf.get(key) ?? `display ${policyScreens.indexOf(screen)}`;
     const forced = override && (forcedKey === undefined || forcedKey === key) ? override.grid : undefined;
     if (forced && panes.length > forced.cols * forced.rows) {
       throw new Error(
@@ -2057,11 +2054,7 @@ async function runArrange(state: SeanceState, opts: ArrangeOptions): Promise<voi
   state.identity = identity;
 
   const screens = await ghostty.listScreens();
-  const policyScreens: PolicyScreen[] = screens.map((s) => ({
-    key: String(s.displayId),
-    rect: s.rect,
-    isMain: s.isMain,
-  }));
+  const policyScreens = toPolicyScreens(screens);
   const roles = computeRoles(policyScreens);
   const roleOf = new Map<string, Role>();
   for (const [role, s] of roles) roleOf.set(s.key, role);
@@ -2074,8 +2067,7 @@ async function runArrange(state: SeanceState, opts: ArrangeOptions): Promise<voi
   }
 
   // Which families go on which display. Normally decided by balancing across
-  // the three roles; --in-place keeps every pane on the display it is on now,
-  // which is also the only way to lay out a fourth or fifth display.
+  // every display; --in-place keeps every pane on the display it is on now.
   const layoutPlan = new Map<string, { label: string; families: PaneFamily[] }>();
   let notes: PlacementNote[] = [];
   if (opts.inPlace) {
@@ -2108,6 +2100,7 @@ async function runArrange(state: SeanceState, opts: ArrangeOptions): Promise<voi
       state.autoPlacement ?? {},
       roles,
       budget,
+      policyScreens,
     );
     state.autoPlacement = assigned.autoPlacement;
     notes = assigned.notes;
@@ -2175,6 +2168,15 @@ async function runArrange(state: SeanceState, opts: ArrangeOptions): Promise<voi
  * a title flash, so it is gated on a cheap process-wide check that answers "is
  * anything minimized at all" — the answer is normally no.
  */
+/**
+ * Keyed on the display UUID, which survives a reconnect, so a key written into
+ * a rule or into autoPlacement still names the same panel next week. The
+ * CGDirectDisplayID is only the fallback for a display whose UUID is unreadable.
+ */
+function toPolicyScreens(screens: Array<{ uuid: string; displayId: number; rect: Rect; isMain: boolean }>): PolicyScreen[] {
+  return screens.map((s) => ({ key: s.uuid || String(s.displayId), rect: s.rect, isMain: s.isMain }));
+}
+
 async function splitByVisibility(
   live: WorldPane[],
 ): Promise<{ active: WorldPane[]; minimized: WorldPane[] }> {
@@ -2235,14 +2237,20 @@ async function saveArrangement(
     active.map((p) => ({ ttyPath: p.ttyPath, label: p.repo })),
   );
   const roleByRepo = new Map<string, Role>();
+  const displayByRepo = new Map<string, string>();
   for (const pane of active) {
     const rect = rects.get(pane.ttyPath);
-    if (!rect || roleByRepo.has(pane.repo)) continue;
-    const role = roleOf.get(screenKeyForRect(rect, screens));
-    if (role) roleByRepo.set(pane.repo, role);
+    if (!rect || displayByRepo.has(pane.repo)) continue;
+    const key = screenKeyForRect(rect, screens);
+    displayByRepo.set(pane.repo, key);
+    roleByRepo.set(pane.repo, roleOf.get(key) ?? "main");
   }
   const rules: PlacementRule[] = [
-    ...[...roleByRepo.entries()].map(([repo, role]) => ({ repo, role })),
+    ...[...roleByRepo.entries()].map(([repo, role]) => ({
+      repo,
+      role,
+      display: displayByRepo.get(repo)!,
+    })),
     { repo: "*", role: "main" as Role },
   ];
   state.arrangements = { ...(state.arrangements ?? {}), [name]: rules };

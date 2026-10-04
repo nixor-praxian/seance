@@ -505,10 +505,71 @@ describe("assignFamilies", () => {
     expect([...byScreen.keys()]).toHaveLength(1);
   });
 
+  it("uses every display, and keeps a pinned repo's display to pinned repos", () => {
+    const top = (key: string, x: number): PolicyScreen => ({
+      key,
+      rect: { x, y: -2160, width: 1920, height: 1080 },
+      isMain: false,
+    });
+    const topLeft = top("tl", -1037);
+    const topRight = top("tr", 883);
+    const all = [main, topRight, topLeft, left, right];
+    const rules: PlacementRule[] = [
+      { repo: "mercury", role: "external.left" },
+      { repo: "zephyr", role: "external.right" },
+      { repo: "*", role: "main" },
+    ];
+    const { byScreen } = assignFamilies(
+      counts(["mercury", 2], ["zephyr", 2], ["a", 3], ["b", 2], ["c", 2], ["d", 1], ["e", 1]),
+      rules,
+      {},
+      roles,
+      BUDGET,
+      all,
+    );
+    expect(byScreen.get("l")!.repos).toEqual(["mercury"]);
+    expect(byScreen.get("r")!.repos).toEqual(["zephyr"]);
+    for (const key of ["m", "tl", "tr"]) expect(byScreen.get(key)?.repos.length).toBeGreaterThan(0);
+  });
+
+  it("pins a repo to a display no role reaches", () => {
+    const fifth: PolicyScreen = {
+      key: "UUID-5",
+      rect: { x: 3000, y: 0, width: 1920, height: 1080 },
+      isMain: false,
+    };
+    const { byScreen } = assignFamilies(
+      counts(["a", 1], ["b", 1]),
+      [{ repo: "a", role: "main", display: "UUID-5" }],
+      {},
+      roles,
+      BUDGET,
+      [main, left, right, fifth],
+    );
+    expect(byScreen.get("UUID-5")).toEqual({ role: "display 3", repos: ["a"] });
+  });
+
+  it("remembers a display without a role by its key", () => {
+    const fifth: PolicyScreen = {
+      key: "UUID-5",
+      rect: { x: 3000, y: 0, width: 1920, height: 1080 },
+      isMain: false,
+    };
+    const { autoPlacement } = assignFamilies(
+      counts(["a", 2], ["b", 2]),
+      [],
+      { a: "UUID-5" },
+      roles,
+      BUDGET,
+      [main, left, right, fifth],
+    );
+    expect(autoPlacement.a).toBe("UUID-5");
+  });
+
   it("does not mutate its inputs", () => {
     const families = counts(["a", 1], ["b", 2]);
     const rules: PlacementRule[] = [{ repo: "a", role: "main" }];
-    const auto: Record<string, Role> = { b: "external.left" };
+    const auto: Record<string, string> = { b: "external.left" };
     const snapshot = JSON.stringify({ families, rules, auto });
     assignFamilies(families, rules, auto, roles, BUDGET);
     expect(JSON.stringify({ families, rules, auto })).toBe(snapshot);

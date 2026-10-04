@@ -8,6 +8,7 @@ import {
   computeRoles,
   resolveRole,
   placePanes,
+  ruleScreen,
   autoGrid,
   assignThemes,
 } from "./policy.js";
@@ -62,6 +63,25 @@ describe("computeRoles", () => {
     expect(roles.size).toBe(3);
   });
 
+  it("takes the nearest external on each side of main on a stacked desk", () => {
+    // A 2x2 of externals above the laptop. Both left
+    // screens sit at x=-1037, and sorting by x alone sent left and right into
+    // the left column, leaving the right column unused.
+    const at = (key: string, x: number, y: number, isMain = false): PolicyScreen => ({
+      key,
+      rect: { x, y, width: isMain ? 1728 : 1920, height: isMain ? 1079 : 1080 },
+      isMain,
+    });
+    const laptop = at("laptop", 0, 38, true);
+    const topLeft = at("topLeft", -1037, -2160);
+    const topRight = at("topRight", 883, -2160);
+    const midLeft = at("midLeft", -1037, -1080);
+    const midRight = at("midRight", 885, -1080);
+    const roles = computeRoles([laptop, topRight, topLeft, midLeft, midRight]);
+    expect(roles.get("external.left")).toBe(midLeft);
+    expect(roles.get("external.right")).toBe(midRight);
+  });
+
   it("gives a single external external.left", () => {
     const laptop = screen("laptop", 0, true);
     const ext = screen("ext", 1728);
@@ -72,6 +92,23 @@ describe("computeRoles", () => {
 
   it("returns an empty map for no screens", () => {
     expect(computeRoles([]).size).toBe(0);
+  });
+});
+
+describe("ruleScreen", () => {
+  const laptop = screen("laptop", 0, true);
+  const left = screen("left", -1920);
+  const far = screen("far", 3648);
+  const roles = computeRoles([laptop, left]);
+
+  it("prefers a connected pinned display over the role", () => {
+    const rule = { repo: "a", role: "main" as Role, display: "far" };
+    expect(ruleScreen(rule, roles, [laptop, left, far])).toBe(far);
+  });
+
+  it("falls back to the role when the pinned display is gone", () => {
+    const rule = { repo: "a", role: "external.left" as Role, display: "far" };
+    expect(ruleScreen(rule, roles, [laptop, left])).toBe(left);
   });
 });
 

@@ -94,7 +94,7 @@ export interface SeanceState {
    * hop screens between runs. Derived, never authored; `organize` never reads it.
    * A role is policy (recomputed from live geometry), not a binding.
    */
-  autoPlacement?: Record<string, import("./policy.js").Role>;
+  autoPlacement?: Record<string, string>;
   layout?: { minPaneWidth: number; minPaneHeight?: number };
   /** Saved workspace recipes (Phase 4): repo/cwd/resume-uuid sets, no window refs. */
   sessions?: Record<string, import("./sessions.js").SessionSnapshot>;

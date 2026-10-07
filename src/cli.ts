@@ -940,7 +940,7 @@ export async function run(argv: string[]): Promise<void> {
   program
     .command("appearance <mode>")
     .description(
-      "Force theme appearance regardless of macOS: dark | light | auto (follow system). Repaints all themed groups and points Claude Code's own theme at the same polarity.",
+      "Force theme appearance regardless of macOS: dark | light | auto (follow system). Repaints every live pane and points Claude Code's own theme at the same polarity.",
     )
     .action(async (mode: string) => {
       const m = mode.toLowerCase();
@@ -968,6 +968,11 @@ export async function run(argv: string[]): Promise<void> {
           }
         }
       }
+
+      const { live } = await perceiveWorld();
+      const { painted } = await paintAll(state, live);
+      await saveState(state);
+      console.log(`repainted ${painted}/${live.length} pane(s)`);
     });
 
   // ── contrast ─────────────────────────────────────────────────────
@@ -2271,6 +2276,7 @@ function formatNote(note: PlacementNote): string {
 const WATCHER_PLIST = "com.seance.watcher.plist";
 
 const DISPLAY_POLL_MS = 2000;
+const AUTO_SNAPSHOT_MS = 5 * 60_000;
 const DISPLAY_SETTLE_MS = 3000;
 const DISPLAY_SETTLE_TIMEOUT_MS = 30000;
 
@@ -2365,7 +2371,7 @@ async function watchLoop(intervalMs: number): Promise<void> {
   const paletteCache = new Map<string, ThemePalette>();
   let screensSig = "";
   let lastDisplayCheck = 0;
-  let tick = 0;
+  let lastSnapshot = 0;
   for (;;) {
     try {
       const state = await loadState();
@@ -2417,9 +2423,10 @@ async function watchLoop(intervalMs: number): Promise<void> {
         if (!liveTtys.has(known)) paintedSig.delete(known);
       }
 
-      // Rolling auto-snapshot every ~5min, so restore works even if the user
-      // never typed `session save` — the crash/reboot recipe is always ≤5min old.
-      if (tick % 150 === 0 && live.length > 0) {
+      // Rolling auto-snapshot, so restore works even if the user never typed
+      // `session save`. Wall clock, for the reason given below.
+      if (Date.now() - lastSnapshot >= AUTO_SNAPSHOT_MS && live.length > 0) {
+        lastSnapshot = Date.now();
         const snapshot = await buildSnapshot("auto", live);
         state.sessions = { ...(state.sessions ?? {}), auto: snapshot };
         await saveState(state);
@@ -2471,7 +2478,6 @@ async function watchLoop(intervalMs: number): Promise<void> {
     } catch (err) {
       console.error(`watch: ${(err as Error).message}`);
     }
-    tick++;
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 }

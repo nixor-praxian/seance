@@ -50,6 +50,14 @@ async function readState(dir: string): Promise<unknown> {
 }
 
 describe("seance CLI (black-box, SEANCE_HOME isolated)", () => {
+  it("--version reports package.json", async () => {
+    await withSeanceDir(async (dir) => {
+      const pkg = JSON.parse(await fs.readFile(resolve(HERE, "..", "package.json"), "utf8"));
+      const r = await runSeance(["--version"], dir);
+      expect(r.stdout.trim()).toBe(pkg.version);
+    });
+  });
+
   it("where prints the state path inside SEANCE_HOME", async () => {
     await withSeanceDir(async (dir) => {
       const r = await runSeance(["where"], dir);

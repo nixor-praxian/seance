@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import * as readline from "node:readline";
@@ -85,7 +85,7 @@ export async function run(argv: string[]): Promise<void> {
   program
     .name("seance")
     .description("Summon and arrange Ghostty terminal panes into named groups.")
-    .version("0.0.1");
+    .version(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
 
   // ── group ─────────────────────────────────────────────────────────
   const group = program.command("group").description("Manage named groups of Ghostty windows.");

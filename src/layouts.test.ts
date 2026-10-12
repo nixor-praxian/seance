@@ -8,6 +8,7 @@ import {
   tileCustomColumns,
   tile,
   cocoaFramesToAx,
+  excludeMenuBars,
 } from "./layouts.js";
 import type { Rect } from "./types.js";
 
@@ -142,6 +143,27 @@ describe("cocoaFramesToAx", () => {
     const out = cocoaFramesToAx(visibleFrames, primaryFrameHeight);
     expect(out).toHaveLength(3);
     expect(out.map((r) => r.x)).toEqual([0, 829, -1091]);
+  });
+});
+
+describe("excludeMenuBars", () => {
+  const main = { x: 0, y: 38, width: 1728, height: 1079 };
+  const external = { x: 885, y: -1080, width: 1920, height: 1080 };
+  const bars = [
+    { x: 0, y: 0, width: 1728, height: 37 },
+    { x: 885, y: -1080, width: 1920, height: 24 },
+  ];
+
+  it("shrinks an external whose visible frame still includes its menu bar", () => {
+    expect(excludeMenuBars([external], bars)).toEqual([{ x: 885, y: -1056, width: 1920, height: 1056 }]);
+  });
+
+  it("leaves a display whose visible frame already excludes the bar", () => {
+    expect(excludeMenuBars([main], bars)).toEqual([main]);
+  });
+
+  it("leaves a display with no menu bar", () => {
+    expect(excludeMenuBars([external], [bars[0]!])).toEqual([external]);
   });
 });
 

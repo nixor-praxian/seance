@@ -3,6 +3,21 @@
 Everything that's changed in seance, newest first. The long version of each
 release lives in [`docs/releases/`](docs/releases/).
 
+## 2.3.2 (12 Oct 2026)
+
+`arrange` stops stacking panes on top of each other on external displays.
+
+- Every external draws its own menu bar, but macOS only tells apps about the
+  one on the main display. seance was tiling the full height of each external,
+  so the top row slid 24px under the row below and hid its title bar. It now
+  finds each menu bar and tiles under it.
+- When Ghostty rounds a pane up past its tile (it sizes windows in whole
+  character cells), seance asks again for a smaller size until it fits,
+  instead of shoving the pane up over its neighbour. On a 3x2 grid that took
+  the overlap from 87px to none.
+
+Restart the watcher (`seance watch --install`) to pick it up.
+
 ## 2.3.1 (7 Oct 2026)
 
 `seance appearance light` now repaints your panes on the spot. It used to set

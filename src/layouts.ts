@@ -177,6 +177,24 @@ export function cocoaFramesToAx(visibleFrames: CocoaRect[], primaryFrameHeight: 
   }));
 }
 
+/**
+ * Take each display's menu bar off the top of its rect. visibleFrame only
+ * excludes the menu bar on the primary display, yet with "Displays have
+ * separate Spaces" (the macOS default) every display draws one, so tiles on an
+ * external were laid out 24px taller than the room they had. `menuBars` are the
+ * WindowServer menu-bar windows, already in AX coordinates.
+ */
+export function excludeMenuBars(rects: Rect[], menuBars: Rect[]): Rect[] {
+  return rects.map((r) => {
+    const bar = menuBars.find(
+      (m) => m.x < r.x + r.width && m.x + m.width > r.x && m.y <= r.y && m.y + m.height > r.y,
+    );
+    if (!bar) return r;
+    const top = bar.y + bar.height;
+    return { ...r, y: top, height: r.height - (top - r.y) };
+  });
+}
+
 function roundPx(n: number): number {
   return Math.round(n);
 }

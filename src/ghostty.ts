@@ -4,7 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { selectPaneProcesses, worktreeMainRoot, type PaneProcess } from "./policy.js";
 import type { Rect, WindowRef } from "./types.js";
-import { cocoaFramesToAx, sizeTook, type CocoaRect } from "./layouts.js";
+import { cocoaFramesToAx, excludeMenuBars, sizeTook, type CocoaRect } from "./layouts.js";
 import type { ThemePalette } from "./themes.js";
 import type { Appearance } from "./themes.js";
 
@@ -166,8 +166,8 @@ export interface WindowDrift {
 
 /**
  * How far a window's origin may sit from the requested one and still count as
- * placed. macOS declines to seat a title bar flush against the top edge of a
- * display, which shows up as a consistent ~25px push downward.
+ * placed. macOS can seat a window a pixel or two off the requested origin,
+ * and a window moved under a menu bar is pushed down below it.
  */
 const ORIGIN_TOLERANCE = 40;
 
@@ -256,8 +256,6 @@ export async function setWindowBounds(
     //
     // Origin is compared, not size: Ghostty snaps a window's size to whole
     // character cells, so a request for 540px legitimately comes back as 602.
-    // macOS also refuses to seat a title bar flush against a display's top edge,
-    // hence a tolerance rather than equality.
     const landed = new Map<number, Rect>();
     for (const token of okRaw.split(/\s+/).filter((t) => t.length > 0)) {
       const [idx, rect] = token.split(":");
@@ -287,28 +285,80 @@ export async function setWindowBounds(
     remaining = remaining.filter((s) => !done.has(s.ttyPath));
   }
 
-  // Ghostty snaps a window to whole character cells, so a cell can come back
-  // taller or wider than it was asked for. Left alone, a bottom-row window then
-  // hangs past the edge of its display and onto the next one. Nudge each grown window back up
-  // and left so its far edge lands where the cell's did: it may now overlap the
-  // neighbour above, but it stays on the display it was assigned to.
+  // Ghostty snaps a window to whole character cells and rounds up, so a cell
+  // can come back taller or wider than it was asked for, and a bottom-row
+  // window then hangs onto the next display. Ask once more for the cell minus
+  // the overshoot: the snap then rounds to at most the cell, leaving a gap of
+  // under a cell instead of an overlap. Ghostty resizes asynchronously, so
+  // the result is read after it settles, not straight after the set.
   //
   // The sentinels are still on the titles at this point; cleanup runs below.
   if (drift.length > 0) {
+    const ref = (d: WindowDrift): string =>
+      `first window whose name ends with "${stamped.find((x) => x.ttyPath === d.ttyPath)!.sentinel.replace(/"/g, '\\"')}"`;
+    const rebrand = async (): Promise<void> => {
+      await Promise.all(
+        drift.map((d) => {
+          const s = stamped.find((x) => x.ttyPath === d.ttyPath)!;
+          return fs.writeFile(s.ttyPath, `\x1b]2;${s.sentinel}\x1b\\`.repeat(3), { flag: "a" }).catch(() => undefined);
+        }),
+      );
+      await new Promise((r) => setTimeout(r, 300));
+    };
+    // Ghostty's snap steps are uneven (measured on one pane: 500, 510 and 515
+    // take, 520 to 535 all come back as 540), so one step back is not always
+    // enough. Back off by a growing multiple of the overshoot.
+    const overshoot = new Map(drift.map((d) => [d.ttyPath, { w: d.got.width - d.want.width, h: d.got.height - d.want.height }]));
+    const shrink = (want: number, over: number, k: number): number =>
+      over > 1 ? Math.max(want - k * over, Math.round(want / 2)) : want;
+    for (let k = 1; k <= 3; k++) {
+      const pending = drift.filter((d) => d.got.width > d.want.width + 1 || d.got.height > d.want.height + 1);
+      if (pending.length === 0) break;
+      await rebrand();
+      await osascript(
+        `tell application "System Events"\n  tell process "${GHOSTTY_APP_NAME}"\n` +
+          pending
+            .map((d) => {
+              const o = overshoot.get(d.ttyPath)!;
+              return `try\n  set w to ${ref(d)}\n  set size of w to {${shrink(d.want.width, o.w, k)}, ${shrink(d.want.height, o.h, k)}}\nend try`;
+            })
+            .join("\n") +
+          `\n  end tell\nend tell`,
+      ).catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 1000));
+      await rebrand();
+      const settledRaw = await osascript(
+        `tell application "System Events"\n  tell process "${GHOSTTY_APP_NAME}"\n  set ok to ""\n` +
+          pending
+            .map(
+              (d, i) =>
+                `try\n  set z to size of ${ref(d)}\n  set ok to ok & "${i}:" & (item 1 of z as string) & "," & (item 2 of z as string) & " "\nend try`,
+            )
+            .join("\n") +
+          `\n  return ok\n  end tell\nend tell`,
+      ).catch(() => "");
+      for (const token of settledRaw.split(/\s+/).filter((t) => t.length > 0)) {
+        const [i, size] = token.split(":");
+        const [w, h] = (size ?? "").split(",").map(Number);
+        const d = pending[Number(i)];
+        if (d && w !== undefined && h !== undefined) d.got = { ...d.got, width: w, height: h };
+      }
+    }
+    const grown = drift.filter((d) => d.got.width > d.want.width + 1 || d.got.height > d.want.height + 1);
+    drift.splice(0, drift.length, ...grown);
+
+    // Whatever still overshoots is nudged back up and left so its far edge
+    // lands where the cell's did: it may overlap the neighbour above, but it
+    // stays on the display it was assigned to.
     const fixes = drift
       .map((d) => {
-        const s = stamped.find((x) => x.ttyPath === d.ttyPath);
-        if (!s) return "";
         const x = d.want.x + Math.min(0, d.want.width - d.got.width);
         const y = d.want.y + Math.min(0, d.want.height - d.got.height);
-        return (
-          `try\n  set w to first window whose name ends with "${s.sentinel.replace(/"/g, '\\"')}"\n` +
-          `  set position of w to {${x}, ${y}}\nend try`
-        );
+        return `try\n  set w to ${ref(d)}\n  set position of w to {${x}, ${y}}\nend try`;
       })
-      .filter(Boolean)
       .join("\n        ");
     if (fixes) {
+      await rebrand();
       await osascript(
         `tell application "System Events"\n  tell process "${GHOSTTY_APP_NAME}"\n        ${fixes}\n  end tell\nend tell`,
       ).catch(() => undefined);
@@ -528,13 +578,29 @@ export async function listScreens(): Promise<ScreenInfo[]> {
       lines.push([v.origin.x, v.origin.y, v.size.width, v.size.height, isMain, isPrimary, did,
                   f.origin.x, f.origin.y, f.size.width, f.size.height, uuidOf(did)].join('\\t'));
     }
+    try {
+      ObjC.import('CoreGraphics');
+      const wins = ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0));
+      for (let i = 0; i < wins.count; i++) {
+        const w = wins.objectAtIndex(i);
+        if (w.objectForKey('kCGWindowLayer').js !== 24) continue;
+        if (ObjC.unwrap(w.objectForKey('kCGWindowName')) !== 'Menubar') continue;
+        const b = w.objectForKey('kCGWindowBounds');
+        lines.push(['M', b.objectForKey('X').js, b.objectForKey('Y').js,
+                    b.objectForKey('Width').js, b.objectForKey('Height').js].join('\\t'));
+      }
+    } catch (e) {}
     lines.join('\\n');
   `;
   const raw = await osascript(script, { language: "JavaScript" });
   const lines = raw.split("\n").filter((l) => l.length > 0);
   const primaryH = Number(lines[0] ?? 0);
-  const rows = lines.slice(1).map((line) => line.split("\t"));
   const num = (row: string[] | undefined, i: number): number => Number(row?.[i] ?? 0);
+  const all = lines.slice(1).map((line) => line.split("\t"));
+  const rows = all.filter((r) => r[0] !== "M");
+  const menuBars = all
+    .filter((r) => r[0] === "M")
+    .map((r) => ({ x: num(r, 1), y: num(r, 2), width: num(r, 3), height: num(r, 4) }));
   const visibleFrames: CocoaRect[] = rows.map((r) => ({
     x: num(r, 0),
     y: num(r, 1),
@@ -547,7 +613,7 @@ export async function listScreens(): Promise<ScreenInfo[]> {
     width: num(r, 9),
     height: num(r, 10),
   }));
-  const rects = cocoaFramesToAx(visibleFrames, primaryH);
+  const rects = excludeMenuBars(cocoaFramesToAx(visibleFrames, primaryH), menuBars);
   const frames = cocoaFramesToAx(fullFrames, primaryH);
   return rects.map((rect, i) => ({
     index: i,

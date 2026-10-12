@@ -62,7 +62,9 @@ Ghostty and macOS offer no shared name for a window:
 
 So seance writes a unique title straight to the pane's TTY, waits until System Events reports the new title, and finds the window by that title. All windows are found first and moved second, in one script, because moving a window brings it to the front and throws off the next lookup. A window that isn't found is retried for up to five rounds, then reported. After moving, seance reads each window's position and size back and retries one that didn't land.
 
-Ghostty sizes windows to whole character cells, so a window rarely ends up exactly the size requested. seance checks the origin within a 40-point tolerance and nudges a window that grew past its tile back onto its own display.
+Ghostty sizes windows to whole character cells, so a window rarely ends up exactly the size requested. seance checks the origin within a 40-point tolerance. A window that grew past its tile is asked again for something smaller, so it rounds to fit; only one that still won't fit is nudged back onto its own display.
+
+Every display draws its own menu bar, but macOS only reports that on the main one. seance reads where each menu bar actually is and tiles below it.
 
 Accessibility only sees the current macOS Space. A window left on another Space, usually after a display disconnects, can't be moved until you bring it over with Mission Control. `arrange` and `organize` list such panes with the command running in each.
 

@@ -405,3 +405,29 @@ describe("seance CLI (black-box, SEANCE_HOME isolated)", () => {
     });
   });
 });
+
+describe("bin/seance launcher", () => {
+  // Alfred and launchd call the launcher with almost no environment, long
+  // after install. An nvm upgrade once deleted the node baked into both.
+  it("runs the newest nvm node under launchd's bare PATH", async () => {
+    await withSeanceDir(async (dir) => {
+      await fs.mkdir(join(dir, "pkg", "bin"), { recursive: true });
+      await fs.mkdir(join(dir, "pkg", "dist"), { recursive: true });
+      await fs.copyFile(resolve(HERE, "..", "bin", "seance"), join(dir, "pkg", "bin", "seance"));
+      await fs.chmod(join(dir, "pkg", "bin", "seance"), 0o755);
+      await fs.writeFile(join(dir, "pkg", "dist", "cli.js"), "");
+      for (const v of ["v22.9.0", "v22.23.4", "v20.1.0"]) {
+        const bin = join(dir, "home", ".nvm", "versions", "node", v, "bin");
+        await fs.mkdir(bin, { recursive: true });
+        await fs.writeFile(join(bin, "node"), `#!/bin/sh\necho ${v} "$@"\n`, { mode: 0o755 });
+      }
+      const r = await execa(join(dir, "pkg", "bin", "seance"), ["watch"], {
+        env: { HOME: join(dir, "home"), PATH: "/usr/bin:/bin" },
+        extendEnv: false,
+        reject: false,
+      });
+      const pkg = await fs.realpath(join(dir, "pkg"));
+      expect(r.stdout.trim()).toBe(`v22.23.4 ${pkg}/dist/cli.js watch`);
+    });
+  });
+});

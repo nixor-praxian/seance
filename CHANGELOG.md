@@ -3,6 +3,22 @@
 Everything that's changed in seance, newest first. The long version of each
 release lives in [`docs/releases/`](docs/releases/).
 
+## 2.3.3 (28 Oct 2026)
+
+The Alfred palette and the watcher survive a Node upgrade.
+
+- Both used to record the exact Node binary they were installed with. When nvm
+  upgraded Node it deleted that binary, so `s` in Alfred fell through to plain
+  file search, and the watcher would fail to start at the next login.
+- They now go through a small launcher, `bin/seance`, that picks the newest
+  nvm Node (or Homebrew's) each time it runs.
+- A new Node is a new binary to macOS, so after an upgrade it may ask once
+  again for Accessibility permission before the watcher can move windows.
+
+**Action:** run `seance alfred install` and `seance watch --install` once.
+
+[Full notes](docs/releases/2.3.3.md)
+
 ## 2.3.2 (12 Oct 2026)
 
 `arrange` stops stacking panes on top of each other on external displays.

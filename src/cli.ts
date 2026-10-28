@@ -1588,12 +1588,13 @@ export async function run(argv: string[]): Promise<void> {
       });
       const dest = join(workflows, "com.seance.palette");
       await fs.cp(src, dest, { recursive: true, force: true });
-      // Alfred runs scripts under a sterile PATH; bake in the dir of the node
-      // that's running us (covers nvm/homebrew/system installs of `seance`).
+      // Alfred runs scripts under a sterile PATH. Put bin/seance first: it finds
+      // node per run, so the workflow survives a Node upgrade that deletes the
+      // node this install ran under.
       const plistPath = join(dest, "info.plist");
       const plist = await fs.readFile(plistPath, "utf8");
       const path = [
-        dirname(process.execPath),
+        join(packageRoot(), "bin"),
         "/opt/homebrew/bin",
         "/usr/local/bin",
         "/usr/bin",
@@ -2503,8 +2504,7 @@ async function installWatcher(): Promise<void> {
   <key>Label</key><string>com.seance.watcher</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${process.execPath}</string>
-    <string>${cliJs}</string>
+    <string>${join(packageRoot(), "bin", "seance")}</string>
     <string>watch</string>
   </array>
   <key>RunAtLoad</key><true/>

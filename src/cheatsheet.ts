@@ -60,7 +60,7 @@ Logs: \`~/.config/seance/watcher.log\`. Remove with \`seance watch --uninstall\`
 
 - **Plugging in a display rearranged everything** — the watcher only re-tiles arrangements it hasn't laid out before, so this should happen once per new setup and never again. If it keeps happening: \`seance reflow off\`. If you *want* a re-tile every time: \`seance reflow always\`.
 - **Windows don't move** — grant Accessibility to the terminal you run seance from: System Settings → Privacy & Security → Accessibility.
-- **The Alfred keyword does nothing** — re-run \`seance alfred install\`. It bakes your node's PATH into the workflow, which Alfred otherwise runs under a sterile environment.
+- **The Alfred keyword does nothing**: re-run \`seance alfred install\`. It points the workflow at seance's own launcher, which finds node on each run, because Alfred otherwise runs scripts under a sterile environment.
 - **Every repo shows up as \`home\`** — \`lsof\` couldn't read a cwd (sandboxed child process). Those panes still get placed, just under the fallback name.
 - **A pane disappeared** — it's alive on another macOS Space, where Accessibility can't see it. Bring it over with Mission Control, then organize. It still gets painted, since OSC crosses Spaces.
 - **Terminal text is invisible** — Claude Code renders with its own fixed theme and its own text color, so a light terminal under a dark Claude theme means light-on-light. Pin the terminal to match: \`seance appearance dark\`.

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Alfred and launchd call this by absolute path under a sterile PATH, and keep
+# calling it across Node upgrades, so node is resolved per run, never baked in:
+# an nvm upgrade deletes the old version's directory along with its binary.
+root=$(cd "$(dirname "$0")/.." && pwd -P)
+node=$(ls -d "$HOME"/.nvm/versions/node/v*/bin/node 2>/dev/null | sort -V | tail -1)
+[ -x "$node" ] || node=$(PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" command -v node)
+[ -n "$node" ] || { echo "seance: no node found (nvm, Homebrew or /usr/local)" >&2; exit 127; }
+exec "$node" "$root/dist/cli.js" "$@"

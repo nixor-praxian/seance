@@ -61,14 +61,17 @@ A change users can see is not done until it is released. In the same pass:
 2. Add an entry at the top of `CHANGELOG.md`: a one-line headline, then short
    bullets in plain words about what the user will notice, and an **Action:**
    line if they must do anything (restart the watcher, re-run an install).
-3. For anything beyond a small fix, write `docs/releases/<version>.md`: *What
+3. Write `docs/releases/<version>.md`, even for a small fix: *What
    you'll notice*, *Do I need to do anything?*, then *Under the hood* for root
    causes and numbers. User-facing first, post-mortem second.
    Tone: a developer telling a friend what broke and what they did about it.
    First person, short sentences, a little dry. Concrete about the software,
    never about the owner's own setup, hardware, logs or usage.
    Every number still comes from a measurement.
-4. Commit, tag `v<version>` on that commit, push the commit and the tag, then
+4. **Never push without a release note.** A push that carries a user-visible
+   change must include its `docs/releases/<version>.md`, in the tagged commit.
+   No note, no push: write it first, or stop at commit.
+5. Commit, tag `v<version>` on that commit, push the commit and the tag, then
    `gh release create v<version> --title "<version>: <headline>" --notes-file
    <notes>` using the changelog entry plus a link to the full notes. Unwrap the
    paragraphs first: GitHub renders every newline in a release body.

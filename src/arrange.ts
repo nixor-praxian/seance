@@ -10,18 +10,16 @@ export interface PaneBudget {
 export interface FamilyRequest {
   repo: string;
   count: number;
-  /** Explicit pin (PlacementRule.grid), applied inside this family's band. */
+  /** Explicit pin (PlacementRule.grid), passed only on the display the pin was made for. */
   grid?: GridSpec;
 }
 
-export interface FamilyPlacement {
-  repo: string;
-  band: Rect;
+export interface ScreenLayout {
   grid: GridSpec;
-  /** Exactly `count` rects, row-major within the band, last row stretched to fill. */
-  cells: Rect[];
-  /** False when the band could not honour both floors — the caller surfaces it. */
+  /** False when the grid could not honour both floors; the caller surfaces it. */
   readable: boolean;
+  /** One entry per input family, in input order, each holding exactly `count` cells. */
+  families: Array<{ repo: string; cells: Rect[] }>;
 }
 
 export interface FamilyCount {
@@ -34,76 +32,16 @@ export type PlacementNote =
   | { kind: "empty-role"; role: string; pinnedElsewhere: string[] }
   | { kind: "over-capacity"; role: string; panes: number; capacity: number };
 
-/**
- * A pane should be as portrait as the display is landscape: 9/16 is the
- * geometric mean of common grids (4x1 and 4x2 on a 1728x1047 display, 2x1 on
- * the same, 5x1 on a 1920x1080), to within 0.05%.
- */
-const TARGET_ASPECT = 9 / 16;
-
-/**
- * Per-pane penalty for an empty cell. Deliberately not tuned: the empty
- * row/column prune in chooseGrid decides every historical case on its own, and
- * they all survive any weight in [0, 8].
- */
-const WASTE_WEIGHT = 1;
-
 /** A family must beat its previous display by this much fill before it moves. */
 const HYSTERESIS = 0.15;
 
 const ROLE_ORDER: Role[] = ["main", "external.left", "external.right"];
-
-const EPSILON = 1e-9;
 
 export function gridFits(rect: Rect, grid: GridSpec, budget: PaneBudget): boolean {
   return (
     rect.width / grid.cols >= budget.minPaneWidth &&
     rect.height / grid.rows >= budget.minPaneHeight
   );
-}
-
-/**
- * Pick the grid for `n` panes in `rect`. Candidates must leave no structurally
- * empty row or column and must keep every pane above both floors; among those,
- * the one whose panes sit closest to TARGET_ASPECT wins.
- *
- * With no candidate the floors are unsatisfiable, so width is preserved and
- * height surrendered: a terminal below ~49 columns wraps and stops being
- * readable, whereas one below 14 rows merely scrolls.
- */
-export function chooseGrid(rect: Rect, n: number, budget: PaneBudget): GridSpec {
-  if (n <= 1) return { cols: 1, rows: 1 };
-
-  const landscape = rect.width >= rect.height;
-  const aligned = (g: GridSpec): boolean => (landscape ? g.cols >= g.rows : g.rows >= g.cols);
-
-  const candidates: Array<{ cost: number; grid: GridSpec }> = [];
-  for (let cols = 1; cols <= n; cols++) {
-    for (let rows = 1; rows <= n; rows++) {
-      if (cols * rows < n) continue;
-      if ((cols - 1) * rows >= n || cols * (rows - 1) >= n) continue;
-      const grid = { cols, rows };
-      if (!gridFits(rect, grid, budget)) continue;
-      const aspect = rect.width / cols / (rect.height / rows);
-      const cost =
-        Math.abs(Math.log(aspect / TARGET_ASPECT)) + (WASTE_WEIGHT * (cols * rows - n)) / n;
-      candidates.push({ cost, grid });
-    }
-  }
-
-  if (candidates.length === 0) {
-    const cols = Math.max(1, Math.min(n, Math.floor(rect.width / budget.minPaneWidth)));
-    return { cols, rows: Math.ceil(n / cols) };
-  }
-
-  candidates.sort(
-    (a, b) =>
-      (Math.abs(a.cost - b.cost) < EPSILON ? 0 : a.cost - b.cost) ||
-      (aligned(a.grid) === aligned(b.grid) ? 0 : aligned(a.grid) ? -1 : 1) ||
-      b.grid.cols - a.grid.cols ||
-      b.grid.rows - a.grid.rows,
-  );
-  return candidates[0]!.grid;
 }
 
 /**
@@ -136,74 +74,53 @@ export function tileFill(rect: Rect, grid: GridSpec, count: number): Rect[] {
 }
 
 /**
- * Split a screen into one contiguous band per family — along the long axis, so
- * a landscape display yields columns and a portrait one yields stacked rows —
- * then tile each family inside its own band. Band extent is proportional to
- * pane count with full perpendicular extent, so every pane gets the same area
- * regardless of which repo it belongs to.
+ * Columns first: as many as the display holds at minPaneWidth, then a new row.
+ * Rows are balanced afterwards, so 5 panes on a four-column display are 3 + 2,
+ * not 4 + 1 with one pane stretched across the whole width.
+ */
+export function columnsFirst(rect: Rect, n: number, budget: PaneBudget): GridSpec {
+  if (n <= 1) return { cols: 1, rows: 1 };
+  const fit = Math.max(1, Math.min(n, Math.floor(rect.width / budget.minPaneWidth)));
+  const rows = Math.ceil(n / fit);
+  return { cols: Math.ceil(n / rows), rows };
+}
+
+/**
+ * One column-first grid for every pane on the display, with each family's
+ * panes contiguous in reading order. Splitting the display into a block per
+ * family first is what gave one repo full-height columns and its neighbour a
+ * half-height row.
  *
- * Returns one placement per input family, in input order.
+ * A pinned grid is honoured only when its family has the display to itself,
+ * and trimmed to the pane count. A pin smaller than the count is ignored.
  */
 export function layoutScreen(
   screen: Rect,
   families: FamilyRequest[],
   budget: PaneBudget,
-): FamilyPlacement[] {
-  if (families.length === 0) return [];
-
-  if (families.length === 1) {
-    const family = families[0]!;
-    const pin =
-      family.grid && family.grid.cols * family.grid.rows >= family.count ? family.grid : undefined;
-    const base = pin ?? chooseGrid(screen, family.count, budget);
-    // An oversized pin (2x3 holding one pane) would describe a shape the band
-    // doesn't actually have — tileFill stretches to fill either way — so the
-    // grid is trimmed to what the count needs. chooseGrid never needs this.
-    const cols = Math.min(base.cols, family.count);
-    const grid = { cols, rows: Math.ceil(family.count / cols) };
-    return [
-      {
-        repo: family.repo,
-        band: screen,
-        grid,
-        cells: tileFill(screen, grid, family.count),
-        readable: gridFits(screen, grid, budget),
-      },
-    ];
-  }
-
-  const axis = splitAxis(screen, budget);
-  const origin = axis === "x" ? screen.x : screen.y;
-  const extent = axis === "x" ? screen.width : screen.height;
-  const minExtent = axis === "x" ? budget.minPaneWidth : budget.minPaneHeight;
+): ScreenLayout {
   const total = families.reduce((sum, f) => sum + f.count, 0);
+  const only = families.length === 1 ? families[0]! : undefined;
+  const pin = only?.grid && only.grid.cols * only.grid.rows >= total ? only.grid : undefined;
+  const grid = pin
+    ? { cols: Math.min(pin.cols, total), rows: Math.ceil(total / Math.min(pin.cols, total)) }
+    : columnsFirst(screen, total, budget);
+  const cells = tileFill(screen, grid, total);
+  let at = 0;
+  return {
+    grid,
+    readable: gridFits(screen, grid, budget),
+    families: families.map((f) => {
+      const own = cells.slice(at, at + f.count);
+      at += f.count;
+      return { repo: f.repo, cells: own };
+    }),
+  };
+}
 
-  const flat = proportionalEdges(
-    origin,
-    extent,
-    families.map((f) => f.count),
-    total,
-  );
-  const bands = families.map((_, i) => sliceRect(screen, axis, flat[i]!, flat[i + 1]!));
-  const flatIsReadable = bands.every((band, i) =>
-    gridFits(band, chooseGrid(band, families[i]!.count, budget), budget),
-  );
-  if (flatIsReadable) {
-    return families.flatMap((family, i) => layoutScreen(bands[i]!, [family], budget));
-  }
-
-  const at = balancedSplit(families);
-  const left = families.slice(0, at);
-  const leftCount = left.reduce((sum, f) => sum + f.count, 0);
-  const low = minExtent / extent;
-  const high = 1 - low;
-  const raw = leftCount / total;
-  const fraction = low <= high ? Math.min(Math.max(raw, low), high) : 0.5;
-  const cut = origin + Math.round(extent * fraction);
-  return [
-    ...layoutScreen(sliceRect(screen, axis, origin, cut), left, budget),
-    ...layoutScreen(sliceRect(screen, axis, cut, origin + extent), families.slice(at), budget),
-  ];
+/** The display a rule's grid was made for. A grid is a shape for one display, not for any. */
+export function pinHome(rule: PlacementRule, roles: Map<Role, PolicyScreen>): string | undefined {
+  return rule.display ?? roles.get(rule.role)?.key;
 }
 
 /**
@@ -362,55 +279,9 @@ export function assignFamilies(
   return { byScreen, autoPlacement: nextAuto, notes };
 }
 
-function splitAxis(rect: Rect, budget: PaneBudget): "x" | "y" {
-  const long: "x" | "y" = rect.width >= rect.height ? "x" : "y";
-  const short: "x" | "y" = long === "x" ? "y" : "x";
-  const holdsTwo = (axis: "x" | "y"): boolean =>
-    (axis === "x" ? rect.width : rect.height) >=
-    2 * (axis === "x" ? budget.minPaneWidth : budget.minPaneHeight);
-  return holdsTwo(long) || !holdsTwo(short) ? long : short;
-}
-
-function balancedSplit(families: FamilyRequest[]): number {
-  const total = families.reduce((sum, f) => sum + f.count, 0);
-  let at = 1;
-  let bestDiff = Infinity;
-  let accumulated = 0;
-  for (let i = 1; i < families.length; i++) {
-    accumulated += families[i - 1]!.count;
-    const diff = Math.abs(accumulated - (total - accumulated));
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      at = i;
-    }
-  }
-  return at;
-}
-
-function sliceRect(rect: Rect, axis: "x" | "y", from: number, to: number): Rect {
-  return axis === "x"
-    ? { x: from, y: rect.y, width: to - from, height: rect.height }
-    : { x: rect.x, y: from, width: rect.width, height: to - from };
-}
-
 function edges(origin: number, extent: number, count: number): number[] {
   const out: number[] = [];
   for (let i = 0; i <= count; i++) out.push(Math.round(origin + (extent * i) / count));
-  return out;
-}
-
-function proportionalEdges(
-  origin: number,
-  extent: number,
-  counts: number[],
-  total: number,
-): number[] {
-  const out = [origin];
-  let accumulated = 0;
-  for (const count of counts) {
-    accumulated += count;
-    out.push(Math.round(origin + (extent * accumulated) / total));
-  }
   return out;
 }
 

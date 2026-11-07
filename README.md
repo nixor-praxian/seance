@@ -20,7 +20,7 @@ Run `seance arrange` and every Ghostty pane is sorted by the repo it's working i
 ## What you get
 
 - **Repo detection.** A pane belongs to the git repo its shell is in. A linked worktree counts as the repo it came from, and a folder outside any repo stands for itself.
-- **Automatic layout.** `seance arrange` keeps each repo's panes together in one block, picks a grid that suits each display, and spreads repos across all the screens you have. Minimized panes stay minimized.
+- **Automatic layout.** `seance arrange` fills each display with columns (wrapping to a new row only when a column would get too narrow to read), keeps each repo's panes next to each other, and spreads repos across all the screens you have. Minimized panes stay minimized.
 - **A colour per repo.** Each repo gets a light and dark theme pair plus its own background tint, chosen once and kept. Two repos open side by side are kept visibly different.
 - **Contrast repair.** Palette slots too faint to read are corrected before they're painted, so a terminal app can't write white on white.
 - **Pins.** `seance place <repo> 3x2 --screen 2` tiles that repo now and keeps it there on later runs.

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  chooseGrid,
-  gridFits,
+  columnsFirst,
+  pinHome,
   tileFill,
   layoutScreen,
   displayCapacity,
@@ -36,72 +36,38 @@ function overlaps(a: Rect, b: Rect): boolean {
   );
 }
 
-describe("chooseGrid", () => {
-  it("reproduces the historical layouts", () => {
-    expect(chooseGrid(LAPTOP, 4, BUDGET)).toEqual({ cols: 4, rows: 1 });
-    expect(chooseGrid(LAPTOP, 8, BUDGET)).toEqual({ cols: 4, rows: 2 });
-    expect(chooseGrid(LAPTOP, 2, BUDGET)).toEqual({ cols: 2, rows: 1 });
-    expect(chooseGrid(EXT, 5, BUDGET)).toEqual({ cols: 5, rows: 1 });
+describe("columnsFirst", () => {
+  it("gives one column per pane while each stays above the width floor", () => {
+    expect(columnsFirst(LAPTOP, 1, BUDGET)).toEqual({ cols: 1, rows: 1 });
+    expect(columnsFirst(LAPTOP, 2, BUDGET)).toEqual({ cols: 2, rows: 1 });
+    expect(columnsFirst(LAPTOP, 3, BUDGET)).toEqual({ cols: 3, rows: 1 });
+    expect(columnsFirst(LAPTOP, 4, BUDGET)).toEqual({ cols: 4, rows: 1 });
+    expect(columnsFirst(EXT, 5, BUDGET)).toEqual({ cols: 5, rows: 1 });
   });
 
-  it("prefers an exact fit over a closer aspect with an empty column", () => {
-    expect(chooseGrid(LAPTOP, 6, BUDGET)).toEqual({ cols: 3, rows: 2 });
-    expect(chooseGrid(EXT, 7, BUDGET)).toEqual({ cols: 4, rows: 2 });
+  it("wraps to a new row once another column would breach the floor, balancing the rows", () => {
+    expect(columnsFirst(LAPTOP, 5, BUDGET)).toEqual({ cols: 3, rows: 2 });
+    expect(columnsFirst(LAPTOP, 8, BUDGET)).toEqual({ cols: 4, rows: 2 });
+    expect(columnsFirst(LAPTOP, 9, BUDGET)).toEqual({ cols: 3, rows: 3 });
+    expect(columnsFirst(EXT, 6, BUDGET)).toEqual({ cols: 3, rows: 2 });
   });
 
-  it("fills columns first while they stay above the width floor", () => {
-    expect(chooseGrid(EXT, 1, BUDGET)).toEqual({ cols: 1, rows: 1 });
-    expect(chooseGrid(EXT, 3, BUDGET)).toEqual({ cols: 3, rows: 1 });
-    expect(chooseGrid(EXT, 4, BUDGET)).toEqual({ cols: 4, rows: 1 });
-  });
-
-  it("stacks rows on a portrait display instead of making slivers", () => {
-    expect(chooseGrid(PORTRAIT, 2, BUDGET)).toEqual({ cols: 1, rows: 2 });
-    expect(chooseGrid(PORTRAIT, 4, BUDGET)).toEqual({ cols: 2, rows: 2 });
-    expect(chooseGrid(PORTRAIT, 5, BUDGET)).toEqual({ cols: 2, rows: 3 });
-    expect(chooseGrid(PORTRAIT, 8, BUDGET)).toEqual({ cols: 2, rows: 4 });
-  });
-
-  it("never leaves a structurally empty row or column", () => {
+  it("never makes a column narrower than the floor", () => {
     for (const rect of [LAPTOP, EXT, PORTRAIT]) {
-      for (let n = 1; n <= 20; n++) {
-        const { cols, rows } = chooseGrid(rect, n, BUDGET);
-        expect(cols * rows).toBeGreaterThanOrEqual(n);
-        if (gridFits(rect, { cols, rows }, BUDGET)) {
-          expect((cols - 1) * rows).toBeLessThan(n);
-          expect(cols * (rows - 1)).toBeLessThan(n);
-        }
+      for (let n = 1; n <= 30; n++) {
+        const grid = columnsFirst(rect, n, BUDGET);
+        expect(grid.cols * grid.rows).toBeGreaterThanOrEqual(n);
+        expect((grid.cols - 1) * grid.rows).toBeLessThan(n);
+        expect(rect.width / grid.cols).toBeGreaterThanOrEqual(BUDGET.minPaneWidth);
       }
     }
-  });
-
-  it("keeps every pane above both floors while the display can", () => {
-    for (const rect of [LAPTOP, EXT, PORTRAIT]) {
-      const capacity = displayCapacity(rect, BUDGET);
-      for (let n = 1; n <= capacity; n++) {
-        const grid = chooseGrid(rect, n, BUDGET);
-        expect(gridFits(rect, grid, BUDGET)).toBe(true);
-      }
-    }
-  });
-
-  it("preserves width and surrenders height past capacity", () => {
-    expect(chooseGrid(EXT, 25, BUDGET)).toEqual({ cols: 5, rows: 5 });
-    expect(gridFits(EXT, { cols: 5, rows: 5 }, BUDGET)).toBe(false);
-    expect(gridFits(EXT, { cols: 5, rows: 4 }, BUDGET)).toBe(true);
   });
 
   it("falls back to a single column on a rect narrower than one pane", () => {
-    expect(chooseGrid({ x: 0, y: 0, width: 300, height: 800 }, 3, BUDGET)).toEqual({
+    expect(columnsFirst({ x: 0, y: 0, width: 300, height: 800 }, 3, BUDGET)).toEqual({
       cols: 1,
       rows: 3,
     });
-  });
-
-  it("is deterministic and does not mutate its input", () => {
-    const rect = { ...LAPTOP };
-    expect(chooseGrid(rect, 7, BUDGET)).toEqual(chooseGrid(rect, 7, BUDGET));
-    expect(rect).toEqual(LAPTOP);
   });
 });
 
@@ -148,154 +114,76 @@ describe("tileFill", () => {
 });
 
 describe("layoutScreen", () => {
-  it("gives repo cohesion for free — two families of four are the historical 4x2", () => {
-    const placements = layoutScreen(LAPTOP, [fam("a", 4), fam("b", 4)], BUDGET);
-    expect(placements.map((p) => p.grid)).toEqual([
-      { cols: 2, rows: 2 },
-      { cols: 2, rows: 2 },
-    ]);
-    const cells = placements.flatMap((p) => p.cells);
-    expect(sortRects(cells)).toEqual(sortRects(tileFill(LAPTOP, { cols: 4, rows: 2 }, 8)));
+  const cellsOf = (layout: ReturnType<typeof layoutScreen>): Rect[] =>
+    layout.families.flatMap((f) => f.cells);
+
+  it("tiles all of a display's panes as one grid, whatever the family split", () => {
+    const layout = layoutScreen(LAPTOP, [fam("zeus", 2), fam("party", 2)], BUDGET);
+    expect(layout.grid).toEqual({ cols: 4, rows: 1 });
+    expect(cellsOf(layout)).toEqual(tileFill(LAPTOP, { cols: 4, rows: 1 }, 4));
+    expect(new Set(cellsOf(layout).map((c) => c.height))).toEqual(new Set([LAPTOP.height]));
   });
 
-  it("matches the historical 4x1 and 5x1 whatever the family split", () => {
-    const laptop = layoutScreen(LAPTOP, [fam("a", 1), fam("b", 1), fam("c", 2)], BUDGET);
-    expect(sortRects(laptop.flatMap((p) => p.cells))).toEqual(
-      sortRects(tileFill(LAPTOP, { cols: 4, rows: 1 }, 4)),
-    );
-
-    for (const families of [
-      [fam("a", 1), fam("b", 4)],
-      [fam("a", 2), fam("b", 2), fam("c", 1)],
-    ]) {
-      const ext = layoutScreen(EXT, families, BUDGET);
-      expect(sortRects(ext.flatMap((p) => p.cells))).toEqual(
-        sortRects(tileFill(EXT, { cols: 5, rows: 1 }, 5)),
-      );
+  it("wraps five panes on a laptop to 3 + 2 instead of a column block beside a row block", () => {
+    const layout = layoutScreen(LAPTOP, [fam("a", 2), fam("b", 2), fam("c", 1)], BUDGET);
+    expect(layout.grid).toEqual({ cols: 3, rows: 2 });
+    expect(layout.readable).toBe(true);
+    for (const cell of cellsOf(layout)) {
+      expect(cell.width).toBeGreaterThanOrEqual(BUDGET.minPaneWidth);
     }
   });
 
-  it("keeps every family inside one band that its cells exactly fill", () => {
-    const corpus: FamilyRequest[][] = [
-      [fam("a", 3), fam("b", 2), fam("c", 1)],
-      [fam("a", 1), fam("b", 1)],
-      [fam("a", 5), fam("b", 1), fam("c", 2), fam("d", 1)],
-      [fam("a", 2), fam("b", 2), fam("c", 2), fam("d", 2)],
-    ];
-    for (const families of corpus) {
-      for (const rect of [LAPTOP, EXT, PORTRAIT]) {
-        for (const placement of layoutScreen(rect, families, BUDGET)) {
-          const xs = placement.cells.map((c) => c.x);
-          const ys = placement.cells.map((c) => c.y);
-          const right = Math.max(...placement.cells.map((c) => c.x + c.width));
-          const bottom = Math.max(...placement.cells.map((c) => c.y + c.height));
-          expect({
-            x: Math.min(...xs),
-            y: Math.min(...ys),
-            width: right - Math.min(...xs),
-            height: bottom - Math.min(...ys),
-          }).toEqual(placement.band);
-          expect(placement.cells.reduce((sum, c) => sum + area(c), 0)).toBe(area(placement.band));
+  it("keeps each family contiguous in reading order and preserves order and counts", () => {
+    const families = [fam("a", 3), fam("b", 2), fam("c", 1)];
+    const layout = layoutScreen(LAPTOP, families, BUDGET);
+    expect(layout.families.map((f) => f.repo)).toEqual(["a", "b", "c"]);
+    expect(layout.families.map((f) => f.cells.length)).toEqual([3, 2, 1]);
+    expect(cellsOf(layout)).toEqual(tileFill(LAPTOP, layout.grid, 6));
+  });
+
+  it("covers the screen without overlap", () => {
+    for (const rect of [LAPTOP, EXT, PORTRAIT]) {
+      const cells = cellsOf(layoutScreen(rect, [fam("a", 3), fam("b", 4)], BUDGET));
+      expect(cells.reduce((sum, c) => sum + area(c), 0)).toBe(area(rect));
+      for (let i = 0; i < cells.length; i++) {
+        for (let j = i + 1; j < cells.length; j++) {
+          expect(overlaps(cells[i]!, cells[j]!)).toBe(false);
         }
       }
     }
   });
 
-  it("covers the screen without overlap and preserves family order and counts", () => {
-    const families = [fam("a", 3), fam("b", 2), fam("c", 1)];
-    const placements = layoutScreen(LAPTOP, families, BUDGET);
-    expect(placements.map((p) => p.repo)).toEqual(["a", "b", "c"]);
-    expect(placements.map((p) => p.cells.length)).toEqual([3, 2, 1]);
-
-    const cells = placements.flatMap((p) => p.cells);
-    expect(cells.reduce((sum, c) => sum + area(c), 0)).toBe(area(LAPTOP));
-    for (let i = 0; i < cells.length; i++) {
-      for (let j = i + 1; j < cells.length; j++) {
-        expect(overlaps(cells[i]!, cells[j]!)).toBe(false);
-      }
-    }
-  });
-
-  it("gives every pane the same area regardless of repo", () => {
-    const cells = layoutScreen(EXT, [fam("a", 1), fam("b", 4)], BUDGET).flatMap((p) => p.cells);
-    expect(new Set(cells.map((c) => `${c.width}x${c.height}`)).size).toBe(1);
-  });
-
-  it("is a no-op at one family", () => {
-    const [placement] = layoutScreen(LAPTOP, [fam("a", 4)], BUDGET);
-    expect(placement!.band).toEqual(LAPTOP);
-    expect(placement!.grid).toEqual({ cols: 4, rows: 1 });
-  });
-
-  it("stacks bands top to bottom on a portrait display", () => {
-    const placements = layoutScreen(
-      PORTRAIT,
-      [fam("a", 1), fam("b", 1), fam("c", 1), fam("d", 1), fam("e", 1)],
-      BUDGET,
-    );
-    expect(placements).toHaveLength(5);
-    for (const p of placements) {
-      expect(p.band.x).toBe(0);
-      expect(p.band.width).toBe(1080);
-      expect(p.band.height).toBe(384);
-    }
-    expect(placements.map((p) => p.band.y)).toEqual([0, 384, 768, 1152, 1536]);
-  });
-
-  it("recurses into a band grid when the long axis cannot hold every family", () => {
-    const placements = layoutScreen(
-      LAPTOP,
-      ["a", "b", "c", "d", "e", "f"].map((r) => fam(r, 1)),
-      BUDGET,
-    );
-    expect(placements).toHaveLength(6);
-    expect(new Set(placements.map((p) => p.band.x)).size).toBe(2);
-    expect(new Set(placements.map((p) => p.band.y)).size).toBe(3);
-    for (const p of placements) {
-      expect(p.band.width).toBe(864);
-      expect(p.band.height).toBe(349);
-    }
-  });
-
-  it("clamps bands to the floors when there are more families than fit", () => {
-    const placements = layoutScreen(
-      LAPTOP,
-      ["a", "b", "c", "d", "e", "f", "g", "h", "i"].map((r) => fam(r, 1)),
-      BUDGET,
-    );
-    expect(placements).toHaveLength(9);
-    for (const p of placements) {
-      expect(p.band.width).toBeGreaterThanOrEqual(384);
-      expect(p.band.height).toBeGreaterThanOrEqual(256);
-    }
-  });
-
-  it("honours a pinned grid inside the family's band and ignores one too small", () => {
-    const pinned = layoutScreen(LAPTOP, [fam("a", 2), fam("b", 4, { cols: 2, rows: 2 })], BUDGET);
-    expect(pinned[1]!.grid).toEqual({ cols: 2, rows: 2 });
+  it("honours a pin when its family has the display to itself and ignores one too small", () => {
+    const pinned = layoutScreen(LAPTOP, [fam("a", 4, { cols: 2, rows: 2 })], BUDGET);
+    expect(pinned.grid).toEqual({ cols: 2, rows: 2 });
 
     const ignored = layoutScreen(LAPTOP, [fam("a", 4, { cols: 1, rows: 2 })], BUDGET);
-    expect(ignored[0]!.grid).toEqual({ cols: 4, rows: 1 });
+    expect(ignored.grid).toEqual({ cols: 4, rows: 1 });
+  });
+
+  it("ignores pins when families share the display", () => {
+    const layout = layoutScreen(LAPTOP, [fam("a", 2, { cols: 1, rows: 2 }), fam("b", 2)], BUDGET);
+    expect(layout.grid).toEqual({ cols: 4, rows: 1 });
   });
 
   it("trims a pin the family has outgrown to the shape it actually gets", () => {
-    const [one] = layoutScreen(LAPTOP, [fam("a", 1, { cols: 2, rows: 3 })], BUDGET);
-    expect(one!.grid).toEqual({ cols: 1, rows: 1 });
-    expect(one!.cells).toEqual([LAPTOP]);
+    const one = layoutScreen(LAPTOP, [fam("a", 1, { cols: 2, rows: 3 })], BUDGET);
+    expect(one.grid).toEqual({ cols: 1, rows: 1 });
+    expect(cellsOf(one)).toEqual([LAPTOP]);
 
     const three = layoutScreen(LAPTOP, [fam("a", 3, { cols: 2, rows: 3 })], BUDGET);
-    expect(three[0]!.grid).toEqual({ cols: 2, rows: 2 });
+    expect(three.grid).toEqual({ cols: 2, rows: 2 });
   });
 
-  it("flags an unreadable band instead of throwing", () => {
-    const [placement] = layoutScreen(EXT, [fam("a", 25)], BUDGET);
-    expect(placement!.grid).toEqual({ cols: 5, rows: 5 });
-    expect(placement!.readable).toBe(false);
+  it("flags an unreadable grid instead of throwing", () => {
+    const layout = layoutScreen(EXT, [fam("a", 25)], BUDGET);
+    expect(layout.grid).toEqual({ cols: 5, rows: 5 });
+    expect(layout.readable).toBe(false);
   });
 
   it("handles the empty and single-pane cases", () => {
-    expect(layoutScreen(LAPTOP, [], BUDGET)).toEqual([]);
-    expect(layoutScreen(LAPTOP, [fam("a", 1)], BUDGET)[0]!.cells).toEqual([LAPTOP]);
+    expect(layoutScreen(LAPTOP, [], BUDGET).families).toEqual([]);
+    expect(cellsOf(layoutScreen(LAPTOP, [fam("a", 1)], BUDGET))).toEqual([LAPTOP]);
   });
 
   it("is deterministic and does not mutate its input", () => {
@@ -303,6 +191,22 @@ describe("layoutScreen", () => {
     const snapshot = JSON.parse(JSON.stringify(families)) as FamilyRequest[];
     expect(layoutScreen(LAPTOP, families, BUDGET)).toEqual(layoutScreen(LAPTOP, families, BUDGET));
     expect(families).toEqual(snapshot);
+  });
+});
+
+describe("pinHome", () => {
+  const laptop: PolicyScreen = { key: "LAPTOP", rect: LAPTOP, isMain: true };
+  const roles = new Map<Role, PolicyScreen>([["main", laptop]]);
+
+  it("is the display the pin was saved on, even while that display is gone", () => {
+    expect(pinHome({ repo: "zeus", role: "external.right", display: "EXT-UUID" }, roles)).toBe(
+      "EXT-UUID",
+    );
+  });
+
+  it("is the role's display when no display was saved, and nothing when the role is absent", () => {
+    expect(pinHome({ repo: "a", role: "main" }, roles)).toBe("LAPTOP");
+    expect(pinHome({ repo: "a", role: "external.left" }, roles)).toBeUndefined();
   });
 });
 
@@ -428,7 +332,7 @@ describe("assignFamilies", () => {
   });
 
   it("keeps an over-tall pinned grid from leaving a band half empty", () => {
-    const cells = layoutScreen(LAPTOP, [fam("a", 6, { cols: 2, rows: 4 })], BUDGET).flatMap(
+    const cells = layoutScreen(LAPTOP, [fam("a", 6, { cols: 2, rows: 4 })], BUDGET).families.flatMap(
       (p) => p.cells,
     );
     expect(cells.reduce((sum, c) => sum + area(c), 0)).toBe(area(LAPTOP));

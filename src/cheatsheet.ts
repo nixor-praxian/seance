@@ -52,7 +52,7 @@ Logs: \`~/.config/seance/watcher.log\`. Remove with \`seance watch --uninstall\`
 
 - **identity**: repo → theme pair, assigned on first sight and sticky. No two live repos share one.
 - **placement**: ordered rules, repo → display role (\`main\`, \`external.left\`, \`external.right\`), \`*\` wildcard, first match wins. Roles are computed from live geometry, so a three-display policy is still correct on a laptop. \`arrange\` obeys per-repo rules but ignores \`*\`, otherwise the seeded catch-all would leave it nothing to balance.
-- **layout**: \`minPaneWidth\` (384px) and \`minPaneHeight\` (256px). \`organize\` uses the width alone (\`cols = min(n, floor(width / 384))\`); \`arrange\` uses both, picking the shape whose panes sit closest to 9:16 — a pane should be as portrait as the display is landscape, which is what makes a rotated display stack rows instead of slicing slivers.
+- **layout**: \`minPaneWidth\` (384px) and \`minPaneHeight\` (256px). \`organize\` uses the width alone (\`cols = min(n, floor(width / 384))\`); \`arrange\` does the same for all of a display's panes at once, then balances the rows (5 panes where 4 columns fit become 3 + 2).
 
 **3. Actuation.** Windows are branded via their TTYs, captured as Accessibility references first, then moved in one batch. Palettes are written per-window as OSC sequences, so five repos can sit side by side in five palettes.
 

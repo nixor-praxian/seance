@@ -49,7 +49,7 @@ The UUID is the one identity macOS keeps for a display across reconnects. The di
 
 `organize` uses columns of at least `minPaneWidth` (384 points by default): a display with n panes gets `min(n, floor(width / 384))` columns and as many rows as it needs. A `place` pin overrides that for its repo.
 
-`arrange` splits each display along its long side into one block per repo, sized by pane count, so a repo's panes always touch. Within a block it picks the grid whose panes come closest to 9:16. A pane ends up about as portrait as the display is landscape.
+`arrange` puts every pane on a display into one grid, columns first: one column per pane while each column stays at least `minPaneWidth` wide, then a second row, with the rows balanced (5 panes on a display that fits 4 columns are 3 + 2). A repo's panes sit next to each other in reading order. A `place` pin counts only on the display it was made for, and only when its repo has that display to itself.
 
 ## Window targeting
 

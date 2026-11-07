@@ -30,6 +30,7 @@ import {
 import {
   assignFamilies,
   layoutScreen,
+  pinHome,
   screenKeyForRect,
   type FamilyRequest,
   type PaneBudget,
@@ -2122,22 +2123,25 @@ async function runArrange(state: SeanceState, opts: ArrangeOptions): Promise<voi
     const screen = policyScreens.find((s) => s.key === key)!;
     const byRepo = new Map(familiesOn.map((f) => [f.repo, f]));
     const requests: FamilyRequest[] = familiesOn.map((f) => {
-      const pin = rules.find((r) => r.repo === f.repo)?.grid;
+      const rule = rules.find((r) => r.repo === f.repo);
+      const pin = rule?.grid && pinHome(rule, roles) === key ? rule.grid : undefined;
       return { repo: f.repo, count: f.panes.length, ...(pin ? { grid: pin } : {}) };
     });
-    const placements = layoutScreen(screen.rect, requests, budget);
+    const layout = layoutScreen(screen.rect, requests, budget);
     let panes = 0;
-    for (const placement of placements) {
+    for (const placement of layout.families) {
       const family = byRepo.get(placement.repo)!;
       placement.cells.forEach((rect, i) => {
         plans.push({ ttyPath: family.panes[i]!.ttyPath, rect, label: placement.repo });
       });
       panes += placement.cells.length;
     }
-    const shapes = placements
-      .map((p) => `${p.repo} ${p.grid.cols}x${p.grid.rows}`)
+    const repos = layout.families
+      .map((p) => (p.cells.length > 1 ? `${p.repo}×${p.cells.length}` : p.repo))
       .join(", ");
-    summary.push(`  ${role.padEnd(15)} ${String(panes).padStart(2)} pane(s)  ${shapes}`);
+    summary.push(
+      `  ${role.padEnd(15)} ${String(panes).padStart(2)} pane(s)  ${layout.grid.cols}x${layout.grid.rows}  ${repos}`,
+    );
   }
 
   await ghostty.activate();

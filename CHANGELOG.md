@@ -3,6 +3,21 @@
 Everything that's changed in seance, newest first. The long version of each
 release lives in [`docs/releases/`](docs/releases/).
 
+## 2.3.4 (7 Nov 2026)
+
+`arrange` fills each display with columns, and a repo's saved grid stays on its own display.
+
+- Every pane on a display now goes into one grid: one column per pane, until
+  another column would drop below the minimum readable width. Then it wraps to
+  a second row, with the rows balanced (5 panes where 4 fit become 3 + 2).
+- Before, each repo got its own block of the screen, so one repo could end up
+  with full-height columns and the next with a half-height row.
+- A grid saved with `place` only applies on the display it was saved for. With
+  that display unplugged, the repo gets the normal column layout instead of a
+  squeezed copy of its external shape.
+
+[Full notes](docs/releases/2.3.4.md)
+
 ## 2.3.3 (28 Oct 2026)
 
 The Alfred palette and the watcher survive a Node upgrade.

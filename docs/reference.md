@@ -19,7 +19,7 @@ Every command, the Alfred grammar, the state file and the environment variables.
 
 | Command | What it does |
 |---|---|
-| `seance arrange` | Sort every active (not minimized) pane by repo, spread the repos across every connected display, tile each repo into one block shaped for its display, and paint. It picks the grid itself. |
+| `seance arrange` | Sort every active (not minimized) pane by repo, spread the repos across every connected display, tile each display as one column-first grid with each repo's panes side by side, and paint. It picks the grid itself. |
 | `seance arrange --in-place` | Same, but every pane stays on the display it's on. Useful for a fourth or fifth display. |
 | `seance arrange --save <name>` | Record which display each repo is on now, as a named arrangement. Moves nothing. |
 | `seance arrange <name>` | Apply a saved arrangement for this run. |

@@ -15,6 +15,11 @@ release lives in [`docs/releases/`](docs/releases/).
 - A grid saved with `place` only applies on the display it was saved for. With
   that display unplugged, the repo gets the normal column layout instead of a
   squeezed copy of its external shape.
+- `organize 5x1` with six panes no longer fails. A grid too small for the
+  panes grows along its long side, so you get `6x1`. The Alfred `place` item
+  grows the same way.
+- New `seance min-width <px>` sets the narrowest column before seance wraps to
+  a new row (default 384). Lower it to get more columns per display.
 
 [Full notes](docs/releases/2.3.4.md)
 

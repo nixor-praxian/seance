@@ -976,6 +976,29 @@ export async function run(argv: string[]): Promise<void> {
       console.log(`repainted ${painted}/${live.length} pane(s)`);
     });
 
+  program
+    .command("min-width [px]")
+    .description(
+      "Narrowest column arrange and organize will make before wrapping to a new row. Lower it for more columns per display.",
+    )
+    .action(async (px: string | undefined) => {
+      const state = await loadState();
+      if (px !== undefined) {
+        const value = Number(px);
+        if (!Number.isInteger(value) || value < 160 || value > 4000) {
+          throw new Error("min-width must be a whole number of points between 160 and 4000");
+        }
+        state.layout!.minPaneWidth = value;
+        await saveState(state);
+      }
+      const width = state.layout!.minPaneWidth;
+      console.log(`min column width = ${width}`);
+      for (const screen of await ghostty.listScreens()) {
+        const cols = Math.max(1, Math.floor(screen.rect.width / width));
+        console.log(`  ${screen.rect.width}x${screen.rect.height}: up to ${cols} column(s)`);
+      }
+    });
+
   // ── contrast ─────────────────────────────────────────────────────
   program
     .command("contrast [ratio]")
@@ -1380,7 +1403,7 @@ export async function run(argv: string[]): Promise<void> {
           const onDisplay = m[3] !== undefined ? ` on display ${m[3]}` : "";
           // `place` refuses a grid with fewer cells than the repo has panes,
           // and in Alfred a refusal is an invisible non-zero exit — the item
-          // just appears to do nothing. Grow the rows to fit instead, and put
+          // just appears to do nothing. Grow the grid to fit instead, and put
           // the shape that will actually be applied in the title, so it is
           // visible before the return key rather than after.
           const panes = byRepo.get(repo) ?? 0;
@@ -1390,7 +1413,7 @@ export async function run(argv: string[]): Promise<void> {
             uid: "place",
             title: `Place ${repo} ${applied}${onDisplay}`,
             subtitle:
-              grown && wanted && grown.rows !== wanted.rows
+              grown && wanted && grown !== wanted
                 ? `${gridStr} holds ${wanted.cols * wanted.rows} of ${panes} panes — grown to ${applied}`
                 : applied === "auto"
                   ? "clear the grid pin, back to auto-grid"
@@ -1916,10 +1939,11 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
     const screen = policyScreens.find((s) => s.key === key)!;
     const reposOn = new Set(panes.map((p) => repoByTty.get(p.ttyPath)!));
     const role = roleOf.get(key) ?? `display ${policyScreens.indexOf(screen)}`;
-    const forced = override && (forcedKey === undefined || forcedKey === key) ? override.grid : undefined;
-    if (forced && panes.length > forced.cols * forced.rows) {
-      throw new Error(
-        `${panes.length} pane(s) on ${role} won't fit ${forced.cols}x${forced.rows} — need at least ${panes.length} cells`,
+    const asked = override && (forcedKey === undefined || forcedKey === key) ? override.grid : undefined;
+    const forced = asked ? growGridToFit(asked, panes.length) : undefined;
+    if (asked && forced && forced !== asked) {
+      console.log(
+        `${panes.length} pane(s) on ${role} don't fit ${asked.cols}x${asked.rows}, using ${forced.cols}x${forced.rows}`,
       );
     }
     if (forced && override?.pin) for (const r of reposOn) pinTargets.set(r, role);

@@ -199,6 +199,16 @@ describe("seance CLI (black-box, SEANCE_HOME isolated)", () => {
     });
   });
 
+  it("min-width rejects a width no column can be read at", async () => {
+    await withSeanceDir(async (dir) => {
+      for (const bad of ["100", "abc", "300.5"]) {
+        const r = await runSeance(["min-width", bad], dir);
+        expect(r.exitCode).not.toBe(0);
+        expect(r.stderr).toContain("min-width must be");
+      }
+    });
+  });
+
   it("organize rejects a malformed grid", async () => {
     await withSeanceDir(async (dir) => {
       const r = await runSeance(["organize", "3by2"], dir);

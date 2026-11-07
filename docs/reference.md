@@ -24,7 +24,7 @@ Every command, the Alfred grammar, the state file and the environment variables.
 | `seance arrange --save <name>` | Record which display each repo is on now, as a named arrangement. Moves nothing. |
 | `seance arrange <name>` | Apply a saved arrangement for this run. |
 | `seance organize` | Perceive, place by your rules, tile, paint. Follows the `*` catch-all rule and pinned grids exactly. Never moves a minimized pane. |
-| `seance organize <grid>` | Force a grid such as `3x2` for this run. Fails if a display's panes don't fit it. |
+| `seance organize <grid>` | Force a grid such as `3x2` for this run. A grid too small for a display's panes grows along its long side, so `5x1` with six panes becomes `6x1`. |
 | `seance organize <grid> --screen <n>` | Apply the grid to one display only. |
 | `seance organize <grid> --pin` | Keep the grid as a rule for the repos on the affected displays. |
 | `seance organize auto` | Clear every pinned grid, then organize. |
@@ -42,6 +42,7 @@ A display index is the number `seance screens` prints, counting from 0. It can c
 | Command | What it does |
 |---|---|
 | `seance appearance <dark\|light\|auto>` | Pick the theme side for every repo, or follow macOS with `auto`. Repaints every open pane and sets Claude Code's own `theme` setting to match. |
+| `seance min-width [px]` | Narrowest column `arrange` and `organize` make before wrapping to a new row (default 384). Lower it for more columns per display. With no argument, shows the value and how many columns each display gets. |
 | `seance contrast [ratio\|off]` | Minimum contrast ratio every palette colour must reach against its background (default 4.5). With no argument, audits the registered pairs. `off` paints themes exactly as they ship. |
 | `seance theme list-pairs` | List the theme pairs repos are coloured from. |
 | `seance theme register <name> --dark <theme> --light <theme>` | Add or replace a pair. Theme names must match files in Ghostty's bundled themes folder. |

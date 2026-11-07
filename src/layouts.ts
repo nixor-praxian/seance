@@ -29,8 +29,8 @@ export function parseGrid(input: string): GridSpec {
 }
 
 /**
- * Grow a requested grid until it can hold `count` panes, keeping the requested
- * column count and adding rows.
+ * Grow a requested grid until it can hold `count` panes, along its long side
+ * (columns on a tie): 5x1 with six panes is 6x1, 1x4 with five is 1x5.
  *
  * `place` refuses a grid with fewer cells than the repo has panes, so offering
  * the raw request in the Alfred palette produces an item whose only effect is a
@@ -38,7 +38,9 @@ export function parseGrid(input: string): GridSpec {
  */
 export function growGridToFit(grid: GridSpec, count: number): GridSpec {
   if (grid.cols * grid.rows >= count) return grid;
-  return { cols: grid.cols, rows: Math.ceil(count / grid.cols) };
+  return grid.cols >= grid.rows
+    ? { cols: Math.ceil(count / grid.rows), rows: grid.rows }
+    : { cols: grid.cols, rows: Math.ceil(count / grid.cols) };
 }
 
 /**

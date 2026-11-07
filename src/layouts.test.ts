@@ -21,10 +21,12 @@ describe("growGridToFit", () => {
     expect(growGridToFit({ cols: 4, rows: 1 }, 1)).toEqual({ cols: 4, rows: 1 });
   });
 
-  it("adds rows, keeping the requested column count", () => {
-    expect(growGridToFit({ cols: 4, rows: 1 }, 5)).toEqual({ cols: 4, rows: 2 });
-    expect(growGridToFit({ cols: 2, rows: 1 }, 7)).toEqual({ cols: 2, rows: 4 });
-    expect(growGridToFit({ cols: 1, rows: 1 }, 3)).toEqual({ cols: 1, rows: 3 });
+  it("grows along the long side, columns on a tie", () => {
+    expect(growGridToFit({ cols: 5, rows: 1 }, 6)).toEqual({ cols: 6, rows: 1 });
+    expect(growGridToFit({ cols: 1, rows: 5 }, 6)).toEqual({ cols: 1, rows: 6 });
+    expect(growGridToFit({ cols: 3, rows: 2 }, 7)).toEqual({ cols: 4, rows: 2 });
+    expect(growGridToFit({ cols: 2, rows: 2 }, 5)).toEqual({ cols: 3, rows: 2 });
+    expect(growGridToFit({ cols: 1, rows: 1 }, 3)).toEqual({ cols: 3, rows: 1 });
   });
 });
 

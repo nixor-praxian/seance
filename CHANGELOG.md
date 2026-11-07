@@ -18,6 +18,8 @@ release lives in [`docs/releases/`](docs/releases/).
 - `organize 5x1` with six panes no longer fails. A grid too small for the
   panes grows along its long side, so you get `6x1`. The Alfred `place` item
   grows the same way.
+- A shell in a background tab no longer gets a column of its own. It used to,
+  and that column stayed empty. `arrange` and `organize` now skip it and say so.
 - New `seance min-width <px>` sets the narrowest column before seance wraps to
   a new row (default 384). Lower it to get more columns per display.
 

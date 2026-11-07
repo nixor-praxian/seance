@@ -1923,7 +1923,8 @@ async function runOrganize(override?: OrganizeOverride): Promise<void> {
   // it from the Dock. `arrange` already excludes them; `organize` is what the
   // watcher runs on a display change, so without the same exclusion plugging in
   // a screen un-minimizes everything that was deliberately put away.
-  const { active, minimized } = await splitByVisibility(live);
+  const { active, minimized, hidden } = await splitByVisibility(live);
+  reportHidden(hidden);
   const livePanes: LivePane[] = active.map((p) => ({
     ttyPath: p.ttyPath,
     cwd: p.cwd,
@@ -2090,7 +2091,8 @@ async function runArrange(state: SeanceState, opts: ArrangeOptions): Promise<voi
   const roleOf = new Map<string, Role>();
   for (const [role, s] of roles) roleOf.set(s.key, role);
 
-  const { active, minimized } = await splitByVisibility(live);
+  const { active, minimized, hidden } = await splitByVisibility(live);
+  reportHidden(hidden);
 
   if (opts.save !== undefined) {
     await saveArrangement(state, opts.save, active, policyScreens, roleOf);
@@ -2213,23 +2215,40 @@ function toPolicyScreens(screens: Array<{ uuid: string; displayId: number; rect:
 
 async function splitByVisibility(
   live: WorldPane[],
-): Promise<{ active: WorldPane[]; minimized: WorldPane[] }> {
+): Promise<{ active: WorldPane[]; minimized: WorldPane[]; hidden: WorldPane[] }> {
   const windows = await ghostty.listAllWindows().catch(() => []);
-  if (!windows.some((w) => w.minimized)) return { active: live, minimized: [] };
+  const everyPaneHasAWindow = windows.length >= live.length;
+  if (everyPaneHasAWindow && !windows.some((w) => w.minimized)) {
+    return { active: live, minimized: [], hidden: [] };
+  }
 
-  const states = await ghostty.windowStatesByTty(
-    live.map((p) => ({ ttyPath: p.ttyPath, label: p.repo })),
-  );
+  const targets = live.map((p) => ({ ttyPath: p.ttyPath, label: p.repo }));
+  const states = await ghostty.windowStatesByTty(targets);
+  const missed = targets.filter((t) => !states.has(t.ttyPath));
+  if (missed.length > 0) {
+    for (const [tty, state] of await ghostty.windowStatesByTty(missed)) states.set(tty, state);
+  }
   const active: WorldPane[] = [];
   const minimized: WorldPane[] = [];
+  const hidden: WorldPane[] = [];
   for (const pane of live) {
-    // An unresolved sentinel means the window lost the title race or sits on
-    // another Space; setWindowBounds retries and migrates, so it resolves
-    // strictly better than this single-shot read. Only an explicit yes excludes.
-    if (states.get(pane.ttyPath)?.minimized === true) minimized.push(pane);
+    const state = states.get(pane.ttyPath);
+    if (state?.minimized === true) minimized.push(pane);
+    // Fewer windows than shells means some shell has no window of its own: a
+    // background tab, which macOS does not list, or a window on another Space.
+    // Either way a cell given to it stays empty. A lost title race is the
+    // benign reading only when every shell does have a window.
+    else if (!state && !everyPaneHasAWindow) hidden.push(pane);
     else active.push(pane);
   }
-  return { active, minimized };
+  return { active, minimized, hidden };
+}
+
+function reportHidden(hidden: WorldPane[]): void {
+  if (hidden.length === 0) return;
+  console.log(
+    `not tiled, no window of its own here (a background tab, or another Space: seance gather): ${hidden.map((p) => p.repo).join(", ")}`,
+  );
 }
 
 interface PaneFamily {

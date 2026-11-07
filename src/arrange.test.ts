@@ -118,7 +118,7 @@ describe("layoutScreen", () => {
     layout.families.flatMap((f) => f.cells);
 
   it("tiles all of a display's panes as one grid, whatever the family split", () => {
-    const layout = layoutScreen(LAPTOP, [fam("zeus", 2), fam("party", 2)], BUDGET);
+    const layout = layoutScreen(LAPTOP, [fam("maple", 2), fam("zephyr", 2)], BUDGET);
     expect(layout.grid).toEqual({ cols: 4, rows: 1 });
     expect(cellsOf(layout)).toEqual(tileFill(LAPTOP, { cols: 4, rows: 1 }, 4));
     expect(new Set(cellsOf(layout).map((c) => c.height))).toEqual(new Set([LAPTOP.height]));
@@ -199,7 +199,7 @@ describe("pinHome", () => {
   const roles = new Map<Role, PolicyScreen>([["main", laptop]]);
 
   it("is the display the pin was saved on, even while that display is gone", () => {
-    expect(pinHome({ repo: "zeus", role: "external.right", display: "EXT-UUID" }, roles)).toBe(
+    expect(pinHome({ repo: "maple", role: "external.right", display: "EXT-UUID" }, roles)).toBe(
       "EXT-UUID",
     );
   });

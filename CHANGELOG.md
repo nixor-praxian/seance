@@ -3,7 +3,7 @@
 Everything that's changed in seance, newest first. The long version of each
 release lives in [`docs/releases/`](docs/releases/).
 
-## 2.3.4 (7 Nov 2026)
+## 2.3.4 (9 Nov 2026)
 
 `arrange` fills each display with columns, and a repo's saved grid stays on its own display.
 
@@ -16,8 +16,8 @@ release lives in [`docs/releases/`](docs/releases/).
   that display unplugged, the repo gets the normal column layout instead of a
   squeezed copy of its external shape.
 - `organize 5x1` with six panes no longer fails. A grid too small for the
-  panes grows along its long side, so you get `6x1`. The Alfred `place` item
-  grows the same way.
+  panes grows along its long side, so you get `6x1`. `place` grows the same
+  way, from Alfred or the terminal.
 - A shell in a background tab no longer gets a column of its own. It used to,
   and that column stayed empty. `arrange` and `organize` now skip it and say so.
 - New `seance min-width <px>` sets the narrowest column before seance wraps to

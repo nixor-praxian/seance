@@ -1167,9 +1167,12 @@ export async function run(argv: string[]): Promise<void> {
       }
       const role = [...roles.entries()].find(([, s]) => s.key === target.key)?.[0] ?? "main";
 
-      const grid = gridArg.toLowerCase() === "auto" ? undefined : parseGrid(gridArg);
-      if (grid && panes.length > grid.cols * grid.rows) {
-        throw new Error(`${panes.length} ${repoArg} pane(s) won't fit ${grid.cols}x${grid.rows}`);
+      const asked = gridArg.toLowerCase() === "auto" ? undefined : parseGrid(gridArg);
+      const grid = asked ? growGridToFit(asked, panes.length) : undefined;
+      if (asked && grid && grid !== asked) {
+        console.log(
+          `${panes.length} ${repoArg} pane(s) don't fit ${asked.cols}x${asked.rows}, using ${grid.cols}x${grid.rows}`,
+        );
       }
 
       state.placement = [

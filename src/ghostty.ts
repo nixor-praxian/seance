@@ -197,186 +197,188 @@ export async function setWindowBounds(
   const undersized = new Map<string, Rect>();
   let remaining = stamped;
 
-  for (let round = 0; round < MAX_ROUNDS && remaining.length > 0; round++) {
-    await Promise.all(
-      remaining.map((s) =>
-        fs
-          .writeFile(s.ttyPath, `\x1b]2;${s.sentinel}\x1b\\`.repeat(3), { flag: "a" })
-          .catch(() => undefined),
-      ),
-    );
-    // Ghostty's AX title mirror lags the OSC write by a frame or two.
-    await new Promise((r) => setTimeout(r, 300));
-
-    // Migrate targets to the current macOS Space via Ghostty's native `focus`.
-    // Without this, AX position-set on an off-Space window silently strands it.
-    const focusScript = `
-      tell application id "${GHOSTTY_BUNDLE_ID}"
-        ${remaining
-          .map(
-            (s) =>
-              `try\n` +
-              `  focus (focused terminal of selected tab of (first window whose name ends with "${s.sentinel.replace(/"/g, '\\"')}"))\n` +
-              `end try`,
-          )
-          .join("\n        ")}
-      end tell
-    `;
-    await osascript(focusScript).catch(() => undefined);
-    await new Promise((r) => setTimeout(r, 150));
-
-    const captures = remaining
-      .map(
-        (s, k) =>
-          `set w${k} to missing value\n        try\n          set w${k} to first window whose name ends with "${s.sentinel.replace(/"/g, '\\"')}"\n        end try`,
-      )
-      .join("\n        ");
-    const applies = remaining
-      .map(
-        (s, k) =>
-          `if w${k} is not missing value then\n          try\n            set position of w${k} to {${s.rect.x}, ${s.rect.y}}\n            set size of w${k} to {${s.rect.width}, ${s.rect.height}}\n            set p to position of w${k}\n            set z to size of w${k}\n            set ok to ok & "${s.i}:" & (item 1 of p as string) & "," & (item 2 of p as string) & "," & (item 1 of z as string) & "," & (item 2 of z as string) & " "\n          end try\n        end if`,
-      )
-      .join("\n        ");
-    const script = `
-      tell application "System Events"
-        tell process "${GHOSTTY_APP_NAME}"
-          set ok to ""
-          ${captures}
-          ${applies}
-          return ok
-        end tell
-      end tell
-    `;
-    const okRaw = await osascript(script).catch(() => "");
-    // Setting a position can silently do nothing — most often when the sentinel
-    // resolved to a window whose title is being rewritten under us. Trusting the
-    // fact that the AppleScript ran made `arrange` report a pane placed while it
-    // sat untouched across two displays, so the applied rect is read back in the
-    // same script and compared.
-    //
-    // Origin is compared, not size: Ghostty snaps a window's size to whole
-    // character cells, so a request for 540px legitimately comes back as 602.
-    const landed = new Map<number, Rect>();
-    for (const token of okRaw.split(/\s+/).filter((t) => t.length > 0)) {
-      const [idx, rect] = token.split(":");
-      const [x, y, w, h] = (rect ?? "").split(",").map(Number);
-      if (idx === undefined || x === undefined || y === undefined) continue;
-      landed.set(Number(idx), { x, y, width: w ?? 0, height: h ?? 0 });
-    }
-    for (const s of remaining) {
-      const got = landed.get(s.i);
-      if (!got) continue;
-      if (Math.abs(got.x - s.rect.x) <= ORIGIN_TOLERANCE && Math.abs(got.y - s.rect.y) <= ORIGIN_TOLERANCE) {
-        // A window moved onto another display can take the origin but keep
-        // its old size. The next round re-applies both, and by then it is
-        // already on the right display, so the size takes.
-        if (!sizeTook(s.rect, got)) {
-          undersized.set(s.ttyPath, got);
-          continue;
-        }
-        undersized.delete(s.ttyPath);
-        placed.push(s.ttyPath);
-        if (got.width > s.rect.width + 1 || got.height > s.rect.height + 1) {
-          drift.push({ ttyPath: s.ttyPath, ...(s.label ? { label: s.label } : {}), want: s.rect, got });
-        }
-      }
-    }
-    const done = new Set(placed);
-    remaining = remaining.filter((s) => !done.has(s.ttyPath));
-  }
-
-  // Ghostty snaps a window to whole character cells and rounds up, so a cell
-  // can come back taller or wider than it was asked for, and a bottom-row
-  // window then hangs onto the next display. Ask once more for the cell minus
-  // the overshoot: the snap then rounds to at most the cell, leaving a gap of
-  // under a cell instead of an overlap. Ghostty resizes asynchronously, so
-  // the result is read after it settles, not straight after the set.
-  //
-  // The sentinels are still on the titles at this point; cleanup runs below.
-  if (drift.length > 0) {
-    const ref = (d: WindowDrift): string =>
-      `first window whose name ends with "${stamped.find((x) => x.ttyPath === d.ttyPath)!.sentinel.replace(/"/g, '\\"')}"`;
-    const rebrand = async (): Promise<void> => {
+  try {
+    for (let round = 0; round < MAX_ROUNDS && remaining.length > 0; round++) {
       await Promise.all(
-        drift.map((d) => {
-          const s = stamped.find((x) => x.ttyPath === d.ttyPath)!;
-          return fs.writeFile(s.ttyPath, `\x1b]2;${s.sentinel}\x1b\\`.repeat(3), { flag: "a" }).catch(() => undefined);
-        }),
+        remaining.map((s) =>
+          fs
+            .writeFile(s.ttyPath, `\x1b]2;${s.sentinel}\x1b\\`.repeat(3), { flag: "a" })
+            .catch(() => undefined),
+        ),
       );
+      // Ghostty's AX title mirror lags the OSC write by a frame or two.
       await new Promise((r) => setTimeout(r, 300));
-    };
-    // Ghostty's snap steps are uneven (measured on one pane: 500, 510 and 515
-    // take, 520 to 535 all come back as 540), so one step back is not always
-    // enough. Back off by a growing multiple of the overshoot.
-    const overshoot = new Map(drift.map((d) => [d.ttyPath, { w: d.got.width - d.want.width, h: d.got.height - d.want.height }]));
-    const shrink = (want: number, over: number, k: number): number =>
-      over > 1 ? Math.max(want - k * over, Math.round(want / 2)) : want;
-    for (let k = 1; k <= 3; k++) {
-      const pending = drift.filter((d) => d.got.width > d.want.width + 1 || d.got.height > d.want.height + 1);
-      if (pending.length === 0) break;
-      await rebrand();
-      await osascript(
-        `tell application "System Events"\n  tell process "${GHOSTTY_APP_NAME}"\n` +
-          pending
-            .map((d) => {
-              const o = overshoot.get(d.ttyPath)!;
-              return `try\n  set w to ${ref(d)}\n  set size of w to {${shrink(d.want.width, o.w, k)}, ${shrink(d.want.height, o.h, k)}}\nend try`;
-            })
-            .join("\n") +
-          `\n  end tell\nend tell`,
-      ).catch(() => undefined);
-      await new Promise((r) => setTimeout(r, 1000));
-      await rebrand();
-      const settledRaw = await osascript(
-        `tell application "System Events"\n  tell process "${GHOSTTY_APP_NAME}"\n  set ok to ""\n` +
-          pending
+
+      // Migrate targets to the current macOS Space via Ghostty's native `focus`.
+      // Without this, AX position-set on an off-Space window silently strands it.
+      const focusScript = `
+        tell application id "${GHOSTTY_BUNDLE_ID}"
+          ${remaining
             .map(
-              (d, i) =>
-                `try\n  set z to size of ${ref(d)}\n  set ok to ok & "${i}:" & (item 1 of z as string) & "," & (item 2 of z as string) & " "\nend try`,
+              (s) =>
+                `try\n` +
+                `  focus (focused terminal of selected tab of (first window whose name ends with "${s.sentinel.replace(/"/g, '\\"')}"))\n` +
+                `end try`,
             )
-            .join("\n") +
-          `\n  return ok\n  end tell\nend tell`,
-      ).catch(() => "");
-      for (const token of settledRaw.split(/\s+/).filter((t) => t.length > 0)) {
-        const [i, size] = token.split(":");
-        const [w, h] = (size ?? "").split(",").map(Number);
-        const d = pending[Number(i)];
-        if (d && w !== undefined && h !== undefined) d.got = { ...d.got, width: w, height: h };
+            .join("\n        ")}
+        end tell
+      `;
+      await osascript(focusScript).catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 150));
+
+      const captures = remaining
+        .map(
+          (s, k) =>
+            `set w${k} to missing value\n        try\n          set w${k} to first window whose name ends with "${s.sentinel.replace(/"/g, '\\"')}"\n        end try`,
+        )
+        .join("\n        ");
+      const applies = remaining
+        .map(
+          (s, k) =>
+            `if w${k} is not missing value then\n          try\n            set position of w${k} to {${s.rect.x}, ${s.rect.y}}\n            set size of w${k} to {${s.rect.width}, ${s.rect.height}}\n            set p to position of w${k}\n            set z to size of w${k}\n            set ok to ok & "${s.i}:" & (item 1 of p as string) & "," & (item 2 of p as string) & "," & (item 1 of z as string) & "," & (item 2 of z as string) & " "\n          end try\n        end if`,
+        )
+        .join("\n        ");
+      const script = `
+        tell application "System Events"
+          tell process "${GHOSTTY_APP_NAME}"
+            set ok to ""
+            ${captures}
+            ${applies}
+            return ok
+          end tell
+        end tell
+      `;
+      const okRaw = await osascript(script).catch(() => "");
+      // Setting a position can silently do nothing — most often when the sentinel
+      // resolved to a window whose title is being rewritten under us. Trusting the
+      // fact that the AppleScript ran made `arrange` report a pane placed while it
+      // sat untouched across two displays, so the applied rect is read back in the
+      // same script and compared.
+      //
+      // Origin is compared, not size: Ghostty snaps a window's size to whole
+      // character cells, so a request for 540px legitimately comes back as 602.
+      const landed = new Map<number, Rect>();
+      for (const token of okRaw.split(/\s+/).filter((t) => t.length > 0)) {
+        const [idx, rect] = token.split(":");
+        const [x, y, w, h] = (rect ?? "").split(",").map(Number);
+        if (idx === undefined || x === undefined || y === undefined) continue;
+        landed.set(Number(idx), { x, y, width: w ?? 0, height: h ?? 0 });
+      }
+      for (const s of remaining) {
+        const got = landed.get(s.i);
+        if (!got) continue;
+        if (Math.abs(got.x - s.rect.x) <= ORIGIN_TOLERANCE && Math.abs(got.y - s.rect.y) <= ORIGIN_TOLERANCE) {
+          // A window moved onto another display can take the origin but keep
+          // its old size. The next round re-applies both, and by then it is
+          // already on the right display, so the size takes.
+          if (!sizeTook(s.rect, got)) {
+            undersized.set(s.ttyPath, got);
+            continue;
+          }
+          undersized.delete(s.ttyPath);
+          placed.push(s.ttyPath);
+          if (got.width > s.rect.width + 1 || got.height > s.rect.height + 1) {
+            drift.push({ ttyPath: s.ttyPath, ...(s.label ? { label: s.label } : {}), want: s.rect, got });
+          }
+        }
+      }
+      const done = new Set(placed);
+      remaining = remaining.filter((s) => !done.has(s.ttyPath));
+    }
+
+    // Ghostty snaps a window to whole character cells and rounds up, so a cell
+    // can come back taller or wider than it was asked for, and a bottom-row
+    // window then hangs onto the next display. Ask once more for the cell minus
+    // the overshoot: the snap then rounds to at most the cell, leaving a gap of
+    // under a cell instead of an overlap. Ghostty resizes asynchronously, so
+    // the result is read after it settles, not straight after the set.
+    //
+    // The sentinels are still on the titles at this point; cleanup runs below.
+    if (drift.length > 0) {
+      const ref = (d: WindowDrift): string =>
+        `first window whose name ends with "${stamped.find((x) => x.ttyPath === d.ttyPath)!.sentinel.replace(/"/g, '\\"')}"`;
+      const rebrand = async (): Promise<void> => {
+        await Promise.all(
+          drift.map((d) => {
+            const s = stamped.find((x) => x.ttyPath === d.ttyPath)!;
+            return fs.writeFile(s.ttyPath, `\x1b]2;${s.sentinel}\x1b\\`.repeat(3), { flag: "a" }).catch(() => undefined);
+          }),
+        );
+        await new Promise((r) => setTimeout(r, 300));
+      };
+      // Ghostty's snap steps are uneven (measured on one pane: 500, 510 and 515
+      // take, 520 to 535 all come back as 540), so one step back is not always
+      // enough. Back off by a growing multiple of the overshoot.
+      const overshoot = new Map(drift.map((d) => [d.ttyPath, { w: d.got.width - d.want.width, h: d.got.height - d.want.height }]));
+      const shrink = (want: number, over: number, k: number): number =>
+        over > 1 ? Math.max(want - k * over, Math.round(want / 2)) : want;
+      for (let k = 1; k <= 3; k++) {
+        const pending = drift.filter((d) => d.got.width > d.want.width + 1 || d.got.height > d.want.height + 1);
+        if (pending.length === 0) break;
+        await rebrand();
+        await osascript(
+          `tell application "System Events"\n  tell process "${GHOSTTY_APP_NAME}"\n` +
+            pending
+              .map((d) => {
+                const o = overshoot.get(d.ttyPath)!;
+                return `try\n  set w to ${ref(d)}\n  set size of w to {${shrink(d.want.width, o.w, k)}, ${shrink(d.want.height, o.h, k)}}\nend try`;
+              })
+              .join("\n") +
+            `\n  end tell\nend tell`,
+        ).catch(() => undefined);
+        await new Promise((r) => setTimeout(r, 1000));
+        await rebrand();
+        const settledRaw = await osascript(
+          `tell application "System Events"\n  tell process "${GHOSTTY_APP_NAME}"\n  set ok to ""\n` +
+            pending
+              .map(
+                (d, i) =>
+                  `try\n  set z to size of ${ref(d)}\n  set ok to ok & "${i}:" & (item 1 of z as string) & "," & (item 2 of z as string) & " "\nend try`,
+              )
+              .join("\n") +
+            `\n  return ok\n  end tell\nend tell`,
+        ).catch(() => "");
+        for (const token of settledRaw.split(/\s+/).filter((t) => t.length > 0)) {
+          const [i, size] = token.split(":");
+          const [w, h] = (size ?? "").split(",").map(Number);
+          const d = pending[Number(i)];
+          if (d && w !== undefined && h !== undefined) d.got = { ...d.got, width: w, height: h };
+        }
+      }
+      const grown = drift.filter((d) => d.got.width > d.want.width + 1 || d.got.height > d.want.height + 1);
+      drift.splice(0, drift.length, ...grown);
+
+      // Whatever still overshoots is nudged back up and left so its far edge
+      // lands where the cell's did: it may overlap the neighbour above, but it
+      // stays on the display it was assigned to.
+      const fixes = drift
+        .map((d) => {
+          const x = d.want.x + Math.min(0, d.want.width - d.got.width);
+          const y = d.want.y + Math.min(0, d.want.height - d.got.height);
+          return `try\n  set w to ${ref(d)}\n  set position of w to {${x}, ${y}}\nend try`;
+        })
+        .join("\n        ");
+      if (fixes) {
+        await rebrand();
+        await osascript(
+          `tell application "System Events"\n  tell process "${GHOSTTY_APP_NAME}"\n        ${fixes}\n  end tell\nend tell`,
+        ).catch(() => undefined);
       }
     }
-    const grown = drift.filter((d) => d.got.width > d.want.width + 1 || d.got.height > d.want.height + 1);
-    drift.splice(0, drift.length, ...grown);
-
-    // Whatever still overshoots is nudged back up and left so its far edge
-    // lands where the cell's did: it may overlap the neighbour above, but it
-    // stays on the display it was assigned to.
-    const fixes = drift
-      .map((d) => {
-        const x = d.want.x + Math.min(0, d.want.width - d.got.width);
-        const y = d.want.y + Math.min(0, d.want.height - d.got.height);
-        return `try\n  set w to ${ref(d)}\n  set position of w to {${x}, ${y}}\nend try`;
-      })
-      .join("\n        ");
-    if (fixes) {
-      await rebrand();
-      await osascript(
-        `tell application "System Events"\n  tell process "${GHOSTTY_APP_NAME}"\n        ${fixes}\n  end tell\nend tell`,
-      ).catch(() => undefined);
-    }
+  } finally {
+    // Cleanup: undo the sentinel titles we wrote, so windows don't show
+    // "⎈seance:..." in their title bars until their shell happens to reset it.
+    // We just write the tty basename back; active shells / Claude will reassert
+    // their own title within ms anyway, but idle/waiting windows stay readable.
+    await Promise.all(
+      stamped.map((s) => {
+        const label = s.label ?? s.ttyPath.replace(/^\/dev\//, "");
+        return fs
+          .writeFile(s.ttyPath, `\x1b]2;${label}\x1b\\`, { flag: "a" })
+          .catch(() => undefined);
+      }),
+    );
   }
-
-  // Cleanup: undo the sentinel titles we wrote, so windows don't show
-  // "⎈seance:..." in their title bars until their shell happens to reset it.
-  // We just write the tty basename back; active shells / Claude will reassert
-  // their own title within ms anyway, but idle/waiting windows stay readable.
-  await Promise.all(
-    stamped.map((s) => {
-      const label = s.label ?? s.ttyPath.replace(/^\/dev\//, "");
-      return fs
-        .writeFile(s.ttyPath, `\x1b]2;${label}\x1b\\`, { flag: "a" })
-        .catch(() => undefined);
-    }),
-  );
 
   return {
     placed,
@@ -458,18 +460,21 @@ async function repoRoot(cwd: string): Promise<string> {
 export async function focusTty(ttyPath: string, label?: string): Promise<void> {
   const sentinel = `⎈seance-focus:${Date.now().toString(36)}`;
   await fs.writeFile(ttyPath, `\x1b]2;${sentinel}\x1b\\`.repeat(3), { flag: "a" });
-  await new Promise((r) => setTimeout(r, 300));
-  await activate();
-  await osascript(`
-    tell application id "${GHOSTTY_BUNDLE_ID}"
-      try
-        focus (focused terminal of selected tab of (first window whose name ends with "${sentinel}"))
-      end try
-    end tell
-  `).catch(() => undefined);
-  await fs
-    .writeFile(ttyPath, `\x1b]2;${label ?? ttyPath.replace(/^\/dev\//, "")}\x1b\\`, { flag: "a" })
-    .catch(() => undefined);
+  try {
+    await new Promise((r) => setTimeout(r, 300));
+    await activate();
+    await osascript(`
+      tell application id "${GHOSTTY_BUNDLE_ID}"
+        try
+          focus (focused terminal of selected tab of (first window whose name ends with "${sentinel}"))
+        end try
+      end tell
+    `).catch(() => undefined);
+  } finally {
+    await fs
+      .writeFile(ttyPath, `\x1b]2;${label ?? ttyPath.replace(/^\/dev\//, "")}\x1b\\`, { flag: "a" })
+      .catch(() => undefined);
+  }
 }
 
 export async function launchctl(args: string[]): Promise<void> {
@@ -801,63 +806,70 @@ export async function probeWindows(): Promise<ProbeRow[]> {
   const ROUND_DELAY_MS = 300;
   const sentinelPattern = /⌬probe:(ttys\d+):/;
 
-  for (let round = 0; round < MAX_ROUNDS; round++) {
-    const remaining = ttys.filter((t) => !ttyToGhId.has(t) || !ttyToAx.has(t));
-    if (remaining.length === 0) break;
+  try {
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      const remaining = ttys.filter((t) => !ttyToGhId.has(t) || !ttyToAx.has(t));
+      if (remaining.length === 0) break;
 
-    const stamp = `${Date.now().toString(36)}r${round}`;
-    // Burst: write the sentinel 3× per tty so we're more likely to be the
-    // "last write" when titles are being contested (e.g. Claude Code reasserts
-    // its title every few hundred ms).
-    const payload = (t: string) =>
-      `\x1b]2;⌬probe:${t}:${stamp}\x1b\\`.repeat(3);
-    await Promise.all(
-      remaining.map((t) =>
-        fs.writeFile(`/dev/${t}`, payload(t), { flag: "a" }).catch(() => undefined),
-      ),
-    );
-    await new Promise((r) => setTimeout(r, ROUND_DELAY_MS));
+      const stamp = `${Date.now().toString(36)}r${round}`;
+      // Burst: write the sentinel 3× per tty so we're more likely to be the
+      // "last write" when titles are being contested (e.g. Claude Code reasserts
+      // its title every few hundred ms).
+      const payload = (t: string) =>
+        `\x1b]2;⌬probe:${t}:${stamp}\x1b\\`.repeat(3);
+      await Promise.all(
+        remaining.map((t) =>
+          fs.writeFile(`/dev/${t}`, payload(t), { flag: "a" }).catch(() => undefined),
+        ),
+      );
+      await new Promise((r) => setTimeout(r, ROUND_DELAY_MS));
 
-    const ghScript = `
-      tell application id "${GHOSTTY_BUNDLE_ID}"
-        set out to ""
-        repeat with w in windows
-          set nm to (name of w as string)
-          if nm contains "⌬probe:" then
-            set out to out & (id of w as string) & (ASCII character 9) & nm & "\\n"
-          end if
-        end repeat
-        return out
-      end tell
-    `;
-    const axScript = `
-      tell application "System Events"
-        tell process "${GHOSTTY_APP_NAME}"
+      const ghScript = `
+        tell application id "${GHOSTTY_BUNDLE_ID}"
           set out to ""
-          set i to 0
           repeat with w in windows
-            set i to i + 1
-            set nm to ""
-            try
-              set nm to name of w
-            end try
+            set nm to (name of w as string)
             if nm contains "⌬probe:" then
-              set out to out & i & tab & nm & "\\n"
+              set out to out & (id of w as string) & (ASCII character 9) & nm & "\\n"
             end if
           end repeat
           return out
         end tell
-      end tell
-    `;
-    const [ghRaw, axRaw] = await Promise.all([osascript(ghScript), osascript(axScript)]);
-    for (const [id, name] of parseTsv(ghRaw)) {
-      const m = sentinelPattern.exec(name ?? "");
-      if (m && id) ttyToGhId.set(m[1]!, id);
+      `;
+      const axScript = `
+        tell application "System Events"
+          tell process "${GHOSTTY_APP_NAME}"
+            set out to ""
+            set i to 0
+            repeat with w in windows
+              set i to i + 1
+              set nm to ""
+              try
+                set nm to name of w
+              end try
+              if nm contains "⌬probe:" then
+                set out to out & i & tab & nm & "\\n"
+              end if
+            end repeat
+            return out
+          end tell
+        end tell
+      `;
+      const [ghRaw, axRaw] = await Promise.all([osascript(ghScript), osascript(axScript)]);
+      for (const [id, name] of parseTsv(ghRaw)) {
+        const m = sentinelPattern.exec(name ?? "");
+        if (m && id) ttyToGhId.set(m[1]!, id);
+      }
+      for (const [idxStr, name] of parseTsv(axRaw)) {
+        const m = sentinelPattern.exec(name ?? "");
+        if (m && idxStr) ttyToAx.set(m[1]!, Number(idxStr));
+      }
     }
-    for (const [idxStr, name] of parseTsv(axRaw)) {
-      const m = sentinelPattern.exec(name ?? "");
-      if (m && idxStr) ttyToAx.set(m[1]!, Number(idxStr));
-    }
+  } catch (err) {
+    await Promise.all(
+      ttys.map((t) => fs.writeFile(`/dev/${t}`, `\x1b]2;${t}\x1b\\`, { flag: "a" }).catch(() => undefined)),
+    );
+    throw err;
   }
 
   // Deepest PID per tty = foreground command (latest fork).
@@ -1060,73 +1072,75 @@ export async function windowStatesByTty(
     sentinel: `⎈seance-read:${stamp}:${i}`,
   }));
 
-  await Promise.all(
-    stamped.map((s) =>
-      fs.writeFile(s.ttyPath, `\x1b]2;${s.sentinel}\x1b\\`, { flag: "a" }).catch(() => undefined),
-    ),
-  );
-  await new Promise((r) => setTimeout(r, 200));
+  try {
+    await Promise.all(
+      stamped.map((s) =>
+        fs.writeFile(s.ttyPath, `\x1b]2;${s.sentinel}\x1b\\`, { flag: "a" }).catch(() => undefined),
+      ),
+    );
+    await new Promise((r) => setTimeout(r, 200));
 
-  const script = `
-    tell application "System Events"
-      tell process "${GHOSTTY_APP_NAME}"
-        set out to ""
-        repeat with w in windows
-          set nm to ""
-          try
-            set nm to name of w
-          end try
-          if nm contains "⎈seance-read:" then
-            set px to "?"
-            set py to "?"
+    const script = `
+      tell application "System Events"
+        tell process "${GHOSTTY_APP_NAME}"
+          set out to ""
+          repeat with w in windows
+            set nm to ""
             try
-              set p to position of w
-              set px to (item 1 of p as string)
-              set py to (item 2 of p as string)
+              set nm to name of w
             end try
-            set sw to "?"
-            set sh to "?"
-            try
-              set sz to size of w
-              set sw to (item 1 of sz as string)
-              set sh to (item 2 of sz as string)
-            end try
-            set m to "?"
-            try
-              set m to (value of attribute "AXMinimized" of w) as string
-            end try
-            set out to out & nm & tab & px & tab & py & tab & sw & tab & sh & tab & m & "\\n"
-          end if
-        end repeat
-        return out
+            if nm contains "⎈seance-read:" then
+              set px to "?"
+              set py to "?"
+              try
+                set p to position of w
+                set px to (item 1 of p as string)
+                set py to (item 2 of p as string)
+              end try
+              set sw to "?"
+              set sh to "?"
+              try
+                set sz to size of w
+                set sw to (item 1 of sz as string)
+                set sh to (item 2 of sz as string)
+              end try
+              set m to "?"
+              try
+                set m to (value of attribute "AXMinimized" of w) as string
+              end try
+              set out to out & nm & tab & px & tab & py & tab & sw & tab & sh & tab & m & "\\n"
+            end if
+          end repeat
+          return out
+        end tell
       end tell
-    end tell
-  `;
-  const raw = await osascript(script);
-  const bySentinel = new Map(stamped.map((s) => [s.sentinel, s.ttyPath]));
-  for (const row of parseTsv(raw)) {
-    const [name, x, y, w, h, m] = row;
-    if (!name) continue;
-    const idx = name.indexOf("⎈seance-read:");
-    if (idx < 0) continue;
-    const sent = name.slice(idx);
-    const ttyPath = bySentinel.get(sent);
-    if (!ttyPath) continue;
-    const rect = { x: Number(x), y: Number(y), width: Number(w), height: Number(h) };
-    // A minimized window can refuse `position of w`; the reads are wrapped in
-    // `try` so one such window can't abort the whole enumeration and hand
-    // `gather`/`save` an empty result. An unreadable frame means minimized.
-    const readable = Object.values(rect).every(Number.isFinite);
-    result.set(ttyPath, { rect, minimized: m === "true" || !readable });
+    `;
+    const raw = await osascript(script);
+    const bySentinel = new Map(stamped.map((s) => [s.sentinel, s.ttyPath]));
+    for (const row of parseTsv(raw)) {
+      const [name, x, y, w, h, m] = row;
+      if (!name) continue;
+      const idx = name.indexOf("⎈seance-read:");
+      if (idx < 0) continue;
+      const sent = name.slice(idx);
+      const ttyPath = bySentinel.get(sent);
+      if (!ttyPath) continue;
+      const rect = { x: Number(x), y: Number(y), width: Number(w), height: Number(h) };
+      // A minimized window can refuse `position of w`; the reads are wrapped in
+      // `try` so one such window can't abort the whole enumeration and hand
+      // `gather`/`save` an empty result. An unreadable frame means minimized.
+      const readable = Object.values(rect).every(Number.isFinite);
+      result.set(ttyPath, { rect, minimized: m === "true" || !readable });
+    }
+  } finally {
+    // Restore a readable title — the sentinel must not linger on idle windows.
+    await Promise.all(
+      stamped.map((s) => {
+        const label = s.label ?? s.ttyPath.replace(/^\/dev\//, "");
+        return fs.writeFile(s.ttyPath, `\x1b]2;${label}\x1b\\`, { flag: "a" }).catch(() => undefined);
+      }),
+    );
   }
-
-  // Restore a readable title — the sentinel must not linger on idle windows.
-  await Promise.all(
-    stamped.map((s) => {
-      const label = s.label ?? s.ttyPath.replace(/^\/dev\//, "");
-      return fs.writeFile(s.ttyPath, `\x1b]2;${label}\x1b\\`, { flag: "a" }).catch(() => undefined);
-    }),
-  );
 
   return result;
 }

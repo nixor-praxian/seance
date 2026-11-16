@@ -3,6 +3,26 @@
 Everything that's changed in seance, newest first. The long version of each
 release lives in [`docs/releases/`](docs/releases/).
 
+## 2.3.5 (16 Nov 2026)
+
+Pane titles no longer get stuck on `⎈seance-read:…`.
+
+- To find a pane's window, seance briefly puts a marker in its title and
+  puts the real title back afterwards. If the window read failed, the title
+  was never put back, so idle panes kept showing `⎈seance-read:…` (or
+  `⎈seance:…`) instead of their repo.
+- The title is now restored whether the read works or not. This applies to
+  `arrange`, `organize`, `focus`, `windows --probe` and the watcher.
+- The usual way to hit this: the watcher runs under a new Node that macOS
+  hasn't been given Accessibility permission for yet.
+
+**Action:** if your titles are stuck, run `seance windows --probe` once to
+relabel them. If the watcher log shows "not allowed assistive access", allow
+the Node binary it runs under in System Settings (Accessibility), then
+restart the watcher.
+
+[Full notes](docs/releases/2.3.5.md)
+
 ## 2.3.4 (9 Nov 2026)
 
 `arrange` fills each display with columns, and a repo's saved grid stays on its own display.

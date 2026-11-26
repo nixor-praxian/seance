@@ -51,6 +51,11 @@ The Alfred workflow is a *copy* under `~/Library/Application Support/Alfred/...`
    each target to migrate it across Spaces, and focusing a minimized window restores it from the
    Dock. Both `arrange` and `organize` call `splitByVisibility` for this reason.
 
+6. **The watcher never starts an `osascript` per pass.** WindowServer leaks about two Mach ports
+   per closed client connection; the old 2.4 s screen poll exhausted it in about a week and macOS
+   killed it (logout). Display changes come from the long-lived `watchDisplays` helper. Check the
+   hourly `watch: last hour:` line in `watcher.log` if this is suspected again.
+
 ## Where code belongs
 
 ```

@@ -300,3 +300,18 @@ export function reflowDecision(input: {
   if (input.mode === "new" && input.known) return "known";
   return "reflow";
 }
+
+/**
+ * When the watcher should re-read the display geometry. A change reported by
+ * the long-lived display watcher is acted on at once. Otherwise it reads on a
+ * slow timer, as a safety net while the helper runs and as the fallback while
+ * it is down. Polling every pass is what this replaced: each read is a new
+ * WindowServer client, and WindowServer leaks Mach ports per client.
+ */
+export const DISPLAY_SAFETY_POLL_MS = 5 * 60_000;
+export const DISPLAY_FALLBACK_POLL_MS = 60_000;
+
+export function displayCheckDue(input: { changed: boolean; watching: boolean; sinceLastMs: number }): boolean {
+  if (input.changed) return true;
+  return input.sinceLastMs >= (input.watching ? DISPLAY_SAFETY_POLL_MS : DISPLAY_FALLBACK_POLL_MS);
+}

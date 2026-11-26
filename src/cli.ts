@@ -26,6 +26,7 @@ import {
   type Role,
   liveShades,
   reflowDecision,
+  displayCheckDue,
 } from "./policy.js";
 import {
   assignFamilies,
@@ -2326,7 +2327,7 @@ function formatNote(note: PlacementNote): string {
 
 const WATCHER_PLIST = "com.seance.watcher.plist";
 
-const DISPLAY_POLL_MS = 2000;
+const SUMMARY_MS = 60 * 60_000;
 const AUTO_SNAPSHOT_MS = 5 * 60_000;
 const DISPLAY_SETTLE_MS = 3000;
 const DISPLAY_SETTLE_TIMEOUT_MS = 30000;
@@ -2423,6 +2424,9 @@ async function watchLoop(intervalMs: number): Promise<void> {
   let screensSig = "";
   let lastDisplayCheck = 0;
   let lastSnapshot = 0;
+  let lastSummary = Date.now();
+  const summaryBase = { ...ghostty.osascriptStats, ...ghostty.displayWatchStats };
+  const displays = ghostty.watchDisplays((msg) => console.log(msg));
   for (;;) {
     try {
       const state = await loadState();
@@ -2486,7 +2490,12 @@ async function watchLoop(intervalMs: number): Promise<void> {
       // Gated on wall clock, not `tick % n`: a tick is one iteration of a loop
       // doing osascript and lsof, so a modulo gate is minutes, not the interval
       // it reads as.
-      if (Date.now() - lastDisplayCheck >= DISPLAY_POLL_MS) {
+      const due = displayCheckDue({
+        changed: displays.takeChange(),
+        watching: displays.alive(),
+        sinceLastMs: Date.now() - lastDisplayCheck,
+      });
+      if (due) {
         lastDisplayCheck = Date.now();
         const sig = await screenSignature();
         const mode = state.reflowMode ?? "new";
@@ -2528,6 +2537,18 @@ async function watchLoop(intervalMs: number): Promise<void> {
       }
     } catch (err) {
       console.error(`watch: ${(err as Error).message}`);
+    }
+    if (Date.now() - lastSummary >= SUMMARY_MS) {
+      const o = ghostty.osascriptStats;
+      const d = ghostty.displayWatchStats;
+      const runs = o.runs - summaryBase.runs;
+      const avg = runs > 0 ? Math.round((o.totalMs - summaryBase.totalMs) / runs) : 0;
+      console.log(
+        `watch: last hour: ${runs} osascript runs, ${o.failures - summaryBase.failures} failed, avg ${avg}ms; ` +
+          `display watcher ${displays.alive() ? "up" : "down"}, ${d.exits - summaryBase.exits} restarts`,
+      );
+      Object.assign(summaryBase, o, d);
+      lastSummary = Date.now();
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }

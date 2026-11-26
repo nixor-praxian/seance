@@ -3,6 +3,24 @@
 Everything that's changed in seance, newest first. The long version of each
 release lives in [`docs/releases/`](docs/releases/).
 
+## 2.3.6 (26 Nov 2026)
+
+The watcher no longer slowly exhausts WindowServer.
+
+- To notice display changes, the watcher started a new `osascript` about
+  every 2.4 seconds. Each one leaks a couple of WindowServer Mach ports.
+  After about a week WindowServer ran out and macOS killed it, which logs
+  you out.
+- It now keeps one long-lived helper that reports display changes, and
+  starts no other WindowServer clients in normal use.
+- New hourly line in the watcher log: `osascript` runs, failures, average
+  time, and whether the display helper is up.
+
+**Action:** restart the watcher (`launchctl kickstart -k
+gui/$(id -u)/com.seance.watcher`).
+
+[Full notes](docs/releases/2.3.6.md)
+
 ## 2.3.5 (16 Nov 2026)
 
 Pane titles no longer get stuck on `⎈seance-read:…`.

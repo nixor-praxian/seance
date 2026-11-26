@@ -1,4 +1,5 @@
 import { execa } from "execa";
+import { spawn, type ChildProcess } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -23,8 +24,141 @@ export async function osascript(
     throw new Error("seance: Ghostty bridge requires macOS (osascript not available)");
   }
   const args = opts.language === "JavaScript" ? ["-l", "JavaScript", "-e", script] : ["-e", script];
-  const { stdout } = await execa("osascript", args);
-  return stdout.trim();
+  osascriptStats.runs++;
+  const started = Date.now();
+  try {
+    const { stdout } = await execa("osascript", args);
+    return stdout.trim();
+  } catch (err) {
+    osascriptStats.failures++;
+    throw err;
+  } finally {
+    osascriptStats.totalMs += Date.now() - started;
+  }
+}
+
+/**
+ * Every osascript this process has started. Each one that touches AppKit,
+ * CoreGraphics or System Events opens a WindowServer connection, and
+ * WindowServer keeps about two Mach ports per closed connection (measured on
+ * macOS 27: +455 ports over 200 runs, never released). It is killed when it
+ * runs out, so the watcher reports this count hourly.
+ */
+export const osascriptStats = { runs: 0, failures: 0, totalMs: 0 };
+
+// One process for the watcher's lifetime, polling CoreGraphics in-process.
+// It prints the display signature when it changes and an empty heartbeat line
+// otherwise; the heartbeat also kills it with EPIPE once the watcher is gone.
+// The signature has the same shape as screenSignature() in cli.ts, but it is
+// only used to notice a change: the watcher re-reads through listScreens().
+const DISPLAY_WATCH_SCRIPT = `
+  ObjC.import('CoreGraphics'); ObjC.import('ColorSync'); ObjC.import('Foundation');
+  ObjC.bindFunction('CGDisplayCreateUUIDFromDisplayID', ['void*', ['unsigned int']]);
+  ObjC.bindFunction('CFUUIDCreateString', ['id', ['void*', 'void*']]);
+  const out = $.NSFileHandle.fileHandleWithStandardOutput;
+  const emit = (line) => out.writeData($.NSString.alloc.initWithUTF8String(line + '\\n').dataUsingEncoding($.NSUTF8StringEncoding));
+  const signature = () => {
+    const ids = Ref(), n = Ref();
+    $.CGGetActiveDisplayList(32, ids, n);
+    const parts = [];
+    for (let i = 0; i < n[0]; i++) {
+      const b = $.CGDisplayBounds(ids[i]);
+      let u = '';
+      try { u = ObjC.unwrap($.CFUUIDCreateString($(), $.CGDisplayCreateUUIDFromDisplayID(ids[i]))) || ''; } catch (e) {}
+      parts.push((u || 'id' + ids[i]) + ':' + b.origin.x + ',' + b.origin.y + ',' + b.size.width + ',' + b.size.height);
+    }
+    return parts.sort().join('|');
+  };
+  let last = null;
+  for (;;) {
+    const sig = signature();
+    emit(sig === last ? '' : sig);
+    last = sig;
+    $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(1));
+  }
+`;
+
+const DISPLAY_WATCH_STALE_MS = 30_000;
+const DISPLAY_WATCH_BACKOFF_MS = [5_000, 15_000, 60_000, 300_000];
+
+export const displayWatchStats = { starts: 0, exits: 0 };
+
+export interface DisplayWatch {
+  /** True if the display set changed since the last call. */
+  takeChange(): boolean;
+  /** False while the helper is down or has stopped answering. */
+  alive(): boolean;
+}
+
+/**
+ * Watch the display set from one long-lived osascript instead of starting one
+ * per poll. Restarts the helper with backoff when it exits, and kills it when
+ * it stops sending heartbeats.
+ */
+export function watchDisplays(log: (msg: string) => void): DisplayWatch {
+  let child: ChildProcess | undefined;
+  let changed = false;
+  let lastLine = 0;
+  let failures = 0;
+
+  const start = (): void => {
+    displayWatchStats.starts++;
+    const startedAt = Date.now();
+    lastLine = startedAt;
+    const proc = spawn("osascript", ["-l", "JavaScript", "-e", DISPLAY_WATCH_SCRIPT], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child = proc;
+    let partial = "";
+    proc.stdout?.setEncoding("utf8");
+    proc.stdout?.on("data", (chunk: string) => {
+      lastLine = Date.now();
+      const lines = (partial + chunk).split("\n");
+      partial = lines.pop() ?? "";
+      if (lines.some((l) => l.length > 0)) changed = true;
+    });
+    let stderr = "";
+    proc.stderr?.setEncoding("utf8");
+    proc.stderr?.on("data", (chunk: string) => {
+      stderr = (stderr + chunk).slice(-300);
+    });
+    proc.on("error", (err) => {
+      stderr = err.message;
+    });
+    proc.on("close", (code, signal) => {
+      if (child === proc) child = undefined;
+      displayWatchStats.exits++;
+      const ranMs = Date.now() - startedAt;
+      if (ranMs > 600_000) failures = 0;
+      const wait = DISPLAY_WATCH_BACKOFF_MS[Math.min(failures, DISPLAY_WATCH_BACKOFF_MS.length - 1)]!;
+      failures++;
+      const why = signal ?? `exit ${code}`;
+      const detail = stderr.trim() ? `: ${stderr.trim().split("\n").pop()}` : "";
+      log(`watch: display watcher stopped (${why}) after ${Math.round(ranMs / 1000)}s${detail}; restarting in ${wait / 1000}s`);
+      setTimeout(start, wait).unref();
+    });
+  };
+
+  setInterval(() => {
+    if (child && Date.now() - lastLine > DISPLAY_WATCH_STALE_MS) {
+      log(`watch: display watcher silent for ${Math.round((Date.now() - lastLine) / 1000)}s; killing it`);
+      child.kill();
+    }
+  }, 10_000).unref();
+  const stop = (): void => {
+    child?.kill();
+  };
+  process.once("exit", stop);
+  start();
+
+  return {
+    takeChange: () => {
+      const c = changed;
+      changed = false;
+      return c;
+    },
+    alive: () => child !== undefined && Date.now() - lastLine <= DISPLAY_WATCH_STALE_MS,
+  };
 }
 
 /**

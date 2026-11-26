@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   repoOf,
   reflowDecision,
+  displayCheckDue,
+  DISPLAY_SAFETY_POLL_MS,
+  DISPLAY_FALLBACK_POLL_MS,
   liveShades,
   selectPaneProcesses,
   worktreeMainRoot,
@@ -478,5 +481,25 @@ describe("reflowDecision", () => {
 
   it("does nothing when the displays settle back to the previous shape", () => {
     expect(reflowDecision({ settled: five, previous: five, known: false, mode: "always" })).toBe("unchanged");
+  });
+});
+
+describe("displayCheckDue", () => {
+  it("acts on a reported change immediately", () => {
+    expect(displayCheckDue({ changed: true, watching: true, sinceLastMs: 0 })).toBe(true);
+  });
+  it("does not poll every pass while the display watcher runs", () => {
+    expect(displayCheckDue({ changed: false, watching: true, sinceLastMs: 2_400 })).toBe(false);
+    expect(displayCheckDue({ changed: false, watching: true, sinceLastMs: DISPLAY_FALLBACK_POLL_MS })).toBe(false);
+  });
+  it("still reads on the slow safety timer", () => {
+    expect(displayCheckDue({ changed: false, watching: true, sinceLastMs: DISPLAY_SAFETY_POLL_MS })).toBe(true);
+  });
+  it("falls back to a one-minute poll while the watcher is down, not every pass", () => {
+    expect(displayCheckDue({ changed: false, watching: false, sinceLastMs: 2_400 })).toBe(false);
+    expect(displayCheckDue({ changed: false, watching: false, sinceLastMs: DISPLAY_FALLBACK_POLL_MS })).toBe(true);
+  });
+  it("checks on the first pass", () => {
+    expect(displayCheckDue({ changed: false, watching: true, sinceLastMs: Date.now() })).toBe(true);
   });
 });
